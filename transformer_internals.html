@@ -1,0 +1,1852 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Transformer Internals — 5 Interactive Diagrams</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0d1017;--card:#151921;--card2:#1a2030;--border:#2a3148;--border2:#3a4568;
+  --text:#e8ecf4;--text2:#c4cbdc;--dim:#7c87a8;--dim2:#545f7a;
+  --cyan:#5eead4;--pink:#f9a8d4;--orange:#fdba74;--amber:#fcd34d;
+  --purple:#c4b5fd;--green:#86efac;--blue:#93c5fd;--red:#fca5a5;
+  --cyan-d:#14b8a6;--pink-d:#ec4899;--orange-d:#f97316;--amber-d:#f59e0b;
+  --purple-d:#8b5cf6;--green-d:#22c55e;--blue-d:#3b82f6;--red-d:#ef4444;
+  --mono:'IBM Plex Mono',monospace;--body:'Source Sans 3',sans-serif;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--body);-webkit-font-smoothing:antialiased}
+.wrap{max-width:1020px;margin:0 auto;padding:28px 20px 60px}
+
+.hero{text-align:center;margin-bottom:28px}
+.hero h1{font-size:clamp(24px,3.5vw,34px);font-weight:900;letter-spacing:-.5px;color:var(--text)}
+.hero .gr{background:linear-gradient(135deg,var(--cyan),var(--purple),var(--pink));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero .sub{color:var(--dim);font-size:13px;margin-top:6px}
+
+.tabs{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-bottom:28px;position:sticky;top:0;z-index:50;background:linear-gradient(var(--bg) 65%,transparent);padding:10px 0 18px}
+.tab{font:600 11px var(--mono);padding:10px 16px;border-radius:8px;border:1.5px solid var(--border);background:var(--card);color:var(--dim);cursor:pointer;transition:.15s}
+.tab:hover{border-color:var(--border2);color:var(--text)}
+.tab.on{border-color:var(--cyan-d);color:var(--cyan);background:#0d2d2d}
+
+.panel{display:none}.panel.on{display:block}
+.sec-head{text-align:center;margin-bottom:18px}
+.sec-head h2{font-size:22px;font-weight:800;letter-spacing:-.5px;margin-bottom:4px}
+.sec-head p{color:var(--dim);font-size:13px}
+.diagram{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:28px 24px;box-shadow:0 4px 30px rgba(0,0,0,.3)}
+.cap{max-width:760px;margin:14px auto 0;font-size:12.5px;color:var(--dim);line-height:1.7;text-align:center}
+.cap b{color:var(--text);font-weight:600}
+.ctrl{display:flex;align-items:center;justify-content:center;gap:10px;margin:12px 0}
+.ctrl label{font:600 10px var(--mono);color:var(--dim)}
+.ctrl input[type=range]{width:190px;accent-color:var(--cyan)}
+.ctrl-val{font:700 15px var(--mono);min-width:32px;text-align:center}
+
+/* Shared */
+.explain{background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin:10px 0;font:13px var(--body);color:var(--text2);line-height:1.65}
+.explain .step{color:var(--cyan);font:700 12px var(--mono);margin-right:6px}
+.explain em{color:var(--amber);font-style:normal;font-weight:600}
+.explain strong{color:var(--text);font-weight:700}
+.flow-box{display:inline-flex;align-items:center;justify-content:center;border-radius:10px;padding:10px 24px;font:700 12px var(--mono);border:2px solid;text-align:center}
+.flow-arrow{text-align:center;color:var(--dim2);font-size:20px;line-height:1;padding:3px 0;user-select:none}
+.note{font:11px var(--mono);color:var(--dim)}
+.center-col{display:flex;flex-direction:column;align-items:center;gap:3px}
+
+/* ═══ 1. ATTENTION ═══ */
+.attn-grid{display:grid;gap:8px;margin-bottom:12px}
+.attn-row-wrap{display:grid;grid-template-columns:100px 1fr 1fr 1fr 180px;gap:6px;padding:10px 12px;border-radius:10px;border:2px solid transparent}
+.attn-row-wrap.active{background:rgba(94,234,212,.06);border-color:rgba(94,234,212,.25)}
+.attn-row-wrap.inactive{background:var(--card2);border-color:var(--border)}
+.attn-header{display:grid;grid-template-columns:100px 1fr 1fr 1fr 180px;gap:6px;padding:4px 12px}
+.attn-header span{font:700 9px var(--mono);text-transform:uppercase;letter-spacing:.5px}
+.q-cell .tok{font:700 18px var(--mono);color:var(--cyan)}
+.q-cell .mini{margin-top:4px;display:flex;gap:2px}
+.heat{width:16px;height:16px;border-radius:3px;border:1px solid rgba(255,255,255,.08)}
+.k-cell .dot-line{font:700 12px var(--mono);color:var(--amber);margin-bottom:4px}
+.k-cell .heats{display:flex;gap:2px;margin-bottom:4px}
+.bar{height:10px;border-radius:5px;min-width:5px;margin:3px 0}
+.bar-s{background:var(--orange);opacity:.55}
+.bar-w{background:var(--purple);opacity:.65}
+.w-val{font:700 10px var(--mono);color:var(--purple);margin-left:2px}
+.sc-cell .scores{font:11px var(--mono);color:var(--amber)}
+.sc-cell .weights{font:11px var(--mono);color:var(--purple);margin-top:2px}
+.output-box{background:rgba(134,239,172,.06);border:2px solid rgba(134,239,172,.25);border-radius:12px;padding:16px 20px;margin-top:10px}
+.output-box h4{font:700 14px var(--mono);color:var(--green);margin-bottom:8px}
+.out-eq{font:13px var(--mono);color:var(--text2);line-height:1.8;margin:6px 0}
+.out-eq .wt{font-weight:700;color:var(--purple)}
+.out-eq .vv{font-weight:700;color:var(--green)}
+.out-result{font:700 15px var(--mono);color:var(--green);margin:8px 0}
+.out-note{font:13px var(--body);color:var(--dim)}
+
+/* ═══ 2. MHA ═══ */
+.mha-insight{background:var(--card2);border:1px solid var(--border);border-radius:12px;padding:14px 20px;margin-bottom:14px;text-align:center}
+.mha-insight strong{color:var(--text);font-size:14px}
+.mha-insight .sub{color:var(--dim);font-size:12px;margin-top:3px}
+.mha-heads{display:flex;gap:10px;justify-content:center;margin:12px 0;flex-wrap:wrap}
+.mha-head{border-radius:10px;padding:14px 10px;width:200px;text-align:center;border:2px solid}
+.mha-head h4{font:700 13px var(--mono);margin-bottom:2px}
+.mha-head .role{font:500 12px var(--body);margin-bottom:8px;opacity:.75}
+.mha-head hr{border:none;border-top:1px solid;opacity:.15;margin:6px 0}
+.mha-head .ops{font:10px var(--mono);line-height:2;opacity:.8}
+.mha-head .ops b{font-weight:700;opacity:1}
+.mha-head .example{font:9px var(--mono);color:var(--dim);margin-top:6px}
+
+/* ═══ 3. INPUT ═══ */
+.pipe-stage{display:flex;align-items:flex-start;gap:14px;max-width:750px;margin:0 auto}
+.pipe-box{flex:1;border-radius:10px;padding:12px 16px;border:2px solid;text-align:center}
+.pipe-box .label{font:700 13px var(--mono);margin-bottom:2px}
+.pipe-box .content{font:700 16px var(--mono);margin-top:6px}
+.pipe-note{font:11px var(--mono);color:var(--dim);padding-top:10px;min-width:160px}
+.embed-grid,.pos-grid{display:flex;gap:20px;justify-content:center;margin-top:8px}
+.embed-col,.pos-col{text-align:center}
+.embed-col .eid,.pos-col .pid{font:9px var(--mono);color:var(--dim)}
+.embed-col .word{font:700 15px var(--mono);color:var(--pink)}
+.embed-col .tid{font:9px var(--mono);color:var(--dim2)}
+.vec-cell{display:block;margin:2px auto;width:56px;padding:3px 0;border-radius:4px;font:700 10px var(--mono);text-align:center;border:1px solid}
+
+/* ═══ 4. STACK ═══ */
+.stack-wrap{display:flex;gap:20px;align-items:flex-start}
+.stack-col{display:flex;flex-direction:column;align-items:center;gap:2px}
+.layer-bar{width:300px;height:16px;border-radius:4px;display:flex;align-items:center;padding-left:8px;font:600 8px var(--mono);cursor:pointer;transition:.15s;border:1.5px solid}
+.layer-bar:hover{filter:brightness(1.15)}
+.layer-bar.active{border-width:2.5px;height:22px;font-size:10px;font-weight:700}
+.stack-detail{background:var(--card2);border:2px solid var(--border);border-radius:12px;padding:18px 22px;min-width:360px}
+.stack-detail h3{font:700 16px var(--mono);margin-bottom:4px}
+.stack-detail .desc{font:13px var(--body);color:var(--dim);margin-bottom:10px}
+.stack-detail .arch{font:700 10px var(--mono);padding:10px 12px;border-radius:8px;margin-bottom:10px;border:1px solid}
+.stack-detail .params{font:11px var(--mono);color:var(--dim);line-height:1.9}
+.stack-detail .params b{color:var(--text);font-weight:600}
+.stack-legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px}
+.stack-legend span{font:10px var(--mono);color:var(--dim);display:flex;align-items:center;gap:4px}
+.stack-legend .dot{width:12px;height:12px;border-radius:3px}
+
+/* ═══ 5. OUTPUT ═══ */
+.chart-wrap{background:var(--card2);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-top:8px}
+.chart-title{font:700 9px var(--mono);color:var(--dim);text-transform:uppercase;text-align:center;margin-bottom:12px;letter-spacing:.5px}
+.bars{display:flex;align-items:flex-end;justify-content:center;gap:5px;height:200px;padding-bottom:4px}
+.bar-col{display:flex;flex-direction:column;align-items:center;width:56px}
+.bar-fill{width:40px;border-radius:5px 5px 0 0;border:1.5px solid;border-bottom:none;transition:height .3s;min-height:2px}
+.bar-pct{font:700 9px var(--mono);margin-bottom:3px}
+.bar-word{font:700 10px var(--mono);margin-top:6px}
+.pred-callout{display:inline-block;background:rgba(134,239,172,.08);border:2px solid rgba(134,239,172,.3);border-radius:10px;padding:10px 20px}
+.pred-callout .pw{font:700 16px var(--mono);color:var(--green)}
+.pred-callout .pp{font:12px var(--mono);color:var(--dim)}
+.temp-note{font:700 12px var(--body);text-align:center;margin-top:8px;padding:8px 16px;border-radius:8px;display:inline-block;border:1px solid}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="hero">
+  <h1><span class="gr">Transformer Internals</span></h1>
+  <h1 style="font-size:clamp(14px,2vw,18px);color:var(--dim);margin-top:2px">5 Interactive Diagrams</h1>
+  <p class="sub">Step-by-step visual explanations of core mechanisms in modern LLMs</p>
+</div>
+<div class="tabs">
+  <button class="tab on" onclick="go('attn')">1 · Attention</button>
+  <button class="tab" onclick="go('mha')">2 · Multi-Head</button>
+  <button class="tab" onclick="go('input')">3 · Input Pipeline</button>
+  <button class="tab" onclick="go('stack')">4 · The Stack</button>
+  <button class="tab" onclick="go('output')">5 · Output</button>
+  <button class="tab" onclick="go('backward')">6 · Backward Pass</button>
+</div>
+
+<div class="panel on" id="p-attn">
+  <div class="sec-head"><h2 style="color:var(--cyan)">How Attention Works</h2>
+  <p>The mechanism that lets each word "look at" every other word in the sentence</p></div>
+  <div class="diagram" id="attn-diagram"></div>
+  <div class="ctrl">
+    <label>Focus query token:</label>
+    <div class="ctrl-val" style="color:var(--cyan)" id="qTok">sat</div>
+    <input type="range" min="0" max="2" value="2" id="qSlider" oninput="renderAttn()">
+  </div>
+</div>
+
+<div class="panel" id="p-mha">
+  <div class="sec-head"><h2 style="color:var(--purple)">Multi-Head Attention</h2>
+  <p>Running attention multiple times in parallel to capture different types of relationships</p></div>
+  <div class="diagram" id="mha-diagram"></div>
+</div>
+
+<div class="panel" id="p-input">
+  <div class="sec-head"><h2 style="color:var(--orange)">The Input Pipeline</h2>
+  <p>How raw text becomes numbers the transformer can process</p></div>
+  <div class="diagram" id="input-diagram"></div>
+</div>
+
+<div class="panel" id="p-stack">
+  <div class="sec-head"><h2 style="color:var(--green)">The Transformer Stack</h2>
+  <p>32 identical layers, each building a deeper understanding</p></div>
+  <div class="diagram" id="stack-diagram"></div>
+  <div class="ctrl">
+    <label>Highlight layer:</label>
+    <div class="ctrl-val" style="color:var(--green)" id="layVal">1</div>
+    <input type="range" min="1" max="32" value="1" id="laySlider" oninput="renderStack()">
+  </div>
+</div>
+
+<div class="panel" id="p-output">
+  <div class="sec-head"><h2 style="color:var(--pink)">Output & Prediction</h2>
+  <p>How the transformer picks the next word</p></div>
+  <div class="diagram" id="output-diagram"></div>
+  <div class="ctrl">
+    <label>Temperature:</label>
+    <div class="ctrl-val" style="color:var(--orange)" id="tempVal">1.0</div>
+    <input type="range" min="1" max="30" value="10" id="tempSlider" oninput="renderOutput()">
+  </div>
+</div>
+
+<div class="panel" id="p-backward">
+  <div class="sec-head"><h2 style="color:var(--amber)">Forward & Backward Pass</h2>
+  <p>Complete gradient derivation through the full pipeline, using our exact "The cat sat" numbers</p></div>
+  <div class="diagram" id="backward-diagram"></div>
+</div>
+</div>
+
+<script>
+function go(id){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));
+  document.getElementById('p-'+id).classList.add('on');
+  event.target.classList.add('on');
+  ({attn:renderAttn,mha:renderMHA,input:renderInput,stack:renderStack,output:renderOutput,backward:renderBackward})[id]();
+}
+const tokens=['The','cat','sat'];
+const emb=[[.9,.1,.3,.2],[.2,.8,.6,.1],[.1,.3,.9,.7]];
+function dot(a,b){return a.reduce((s,v,i)=>s+v*b[i],0)}
+function softmax(arr){const m=Math.max(...arr),e=arr.map(v=>Math.exp(v-m)),s=e.reduce((a,b)=>a+b);return e.map(v=>v/s)}
+// Solid heatmap colors for dark bg
+function hc(v,type){
+  if(type==='q')return`hsl(170,${50+v*30}%,${25+v*35}%)`;
+  if(type==='k')return`hsl(35,${50+v*35}%,${25+v*35}%)`;
+  return`hsl(260,${40+v*30}%,${30+v*30}%)`;
+}
+
+// ═══════════════════════════════════════════
+// 1. ATTENTION — with real explanations
+// ═══════════════════════════════════════════
+function renderAttn(){
+  const qi=parseInt(document.getElementById('qSlider').value);
+  document.getElementById('qTok').textContent=tokens[qi];
+  const el=document.getElementById('attn-diagram');
+  let h='';
+
+  // Step-by-step explanation FIRST
+  h+=`<div class="explain">
+    <span class="step">THE IDEA</span>
+    When the transformer processes the word <em>"${tokens[qi]}"</em>, it needs to understand that word <strong>in context</strong>.
+    Attention lets <em>"${tokens[qi]}"</em> look at every other word and decide: "How relevant is each word to understanding me?"
+    <br><br>
+    <span class="step">HOW IT WORKS</span>
+    <strong>1.</strong> Each word creates three vectors: a <em>Query</em> ("what am I looking for?"), a <em>Key</em> ("what do I contain?"), and a <em>Value</em> ("my actual information").
+    <br><strong>2.</strong> The Query of <em>"${tokens[qi]}"</em> is compared against every Key via dot product → giving a <strong>relevance score</strong>.
+    <br><strong>3.</strong> <em>Causal masking</em>: in decoder-only models (GPT, LLaMA), each token can only attend to itself and previous tokens — future positions are masked to −∞ before softmax.
+    <br><strong>4.</strong> Scores are normalized via softmax into <strong>weights</strong> (they sum to 1.0).
+    <br><strong>5.</strong> The output = weighted mix of all Values. Words with higher weights contribute more.
+  </div>`;
+
+  // ── CANONICAL FORMULA ──
+  h+=`<div style="background:rgba(94,234,212,.04);border:2px solid rgba(94,234,212,.2);border-radius:10px;padding:16px 20px;margin:10px 0;text-align:center">`;
+  h+=`<div style="font:700 11px var(--mono);color:var(--cyan);margin-bottom:8px;letter-spacing:1px">CANONICAL ATTENTION EQUATION</div>`;
+  h+=`<div style="font:700 18px var(--mono);color:var(--text);line-height:1.8">`;
+  h+=`Attention(Q, K, V) = softmax( QK<sup>T</sup> / √d<sub>k</sub> + M ) · V`;
+  h+=`</div>`;
+  h+=`<div style="font:12px var(--body);color:var(--dim);margin-top:8px;line-height:1.6">`;
+  h+=`Q = queries, K = keys, V = values, d<sub>k</sub> = head dimension, M = causal mask (0 or −∞)`;
+  h+=`</div></div>`;
+
+  // ── FULL TRANSFORMER BLOCK STRUCTURE ──
+  h+=`<div style="background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin:10px 0">`;
+  h+=`<div style="font:700 11px var(--mono);color:var(--purple);margin-bottom:12px;letter-spacing:1px">WHERE ATTENTION FITS — FULL TRANSFORMER BLOCK</div>`;
+  h+=`<div style="display:flex;flex-direction:column;align-items:center;gap:4px;font:600 11px var(--mono)">`;
+
+  const blockSteps = [
+    { label: 'Input x', color: 'amber', bg: 'rgba(252,211,77,.08)', bdr: 'rgba(252,211,77,.25)' },
+    { label: '↓', arrow: true },
+    { label: 'RMSNorm', color: 'purple', bg: 'rgba(196,181,253,.08)', bdr: 'rgba(196,181,253,.25)' },
+    { label: '↓', arrow: true },
+    { label: 'Multi-Head Self-Attention ◀ THIS DIAGRAM', color: 'cyan', bg: 'rgba(94,234,212,.08)', bdr: 'rgba(94,234,212,.3)', highlight: true },
+    { label: '↓', arrow: true },
+    { label: '⊕ Residual Add (x + Attention(x))', color: 'green', bg: 'rgba(134,239,172,.08)', bdr: 'rgba(134,239,172,.25)' },
+    { label: '↓', arrow: true },
+    { label: 'RMSNorm', color: 'purple', bg: 'rgba(196,181,253,.08)', bdr: 'rgba(196,181,253,.25)' },
+    { label: '↓', arrow: true },
+    { label: 'FFN (SwiGLU in LLaMA / GELU in GPT)', color: 'orange', bg: 'rgba(253,186,116,.08)', bdr: 'rgba(253,186,116,.25)' },
+    { label: '↓', arrow: true },
+    { label: '⊕ Residual Add (x + FFN(x))', color: 'green', bg: 'rgba(134,239,172,.08)', bdr: 'rgba(134,239,172,.25)' },
+    { label: '↓', arrow: true },
+    { label: 'Output → next layer', color: 'amber', bg: 'rgba(252,211,77,.08)', bdr: 'rgba(252,211,77,.25)' },
+  ];
+
+  blockSteps.forEach(s => {
+    if (s.arrow) {
+      h+=`<div style="color:var(--dim2);font-size:16px;line-height:1">↓</div>`;
+    } else {
+      const border = s.highlight ? `border:2.5px solid ${s.bdr}` : `border:1.5px solid ${s.bdr}`;
+      const pad = s.highlight ? 'padding:10px 24px' : 'padding:7px 20px';
+      const size = s.highlight ? 'font-size:12px' : 'font-size:11px';
+      h+=`<div style="background:${s.bg};${border};border-radius:8px;${pad};color:var(--${s.color});${size};text-align:center;min-width:320px">${s.label}</div>`;
+    }
+  });
+
+  h+=`</div>`;
+  h+=`<div style="font:11px var(--body);color:var(--dim);text-align:center;margin-top:10px">`;
+  h+=`This entire block repeats ×N layers (32 in LLaMA-7B, 80 in LLaMA-70B). Residual connections ensure gradients flow unobstructed.`;
+  h+=`</div></div>`;
+
+  // ── STEP 0: SHOW THE EMBEDDING VALUES FIRST ──
+  h+=`<div style="background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin:12px 0">`;
+  h+=`<div style="font:700 12px var(--mono);color:var(--amber);margin-bottom:10px">STEP 0 — THE TOKEN EMBEDDINGS</div>`;
+  h+=`<div style="font:13px var(--body);color:var(--dim);margin-bottom:12px">Real transformers use 4096 dimensions. Here we use 4D toy vectors so every multiplication is visible:</div>`;
+  h+=`<table style="border-collapse:collapse;width:100%;max-width:500px">`;
+  h+=`<tr style="border-bottom:2px solid var(--border)">
+    <th style="text-align:left;padding:8px 14px;font:700 10px var(--mono);color:var(--dim)">TOKEN</th>
+    <th style="text-align:left;padding:8px 14px;font:700 10px var(--mono);color:var(--dim)">EMBEDDING VECTOR</th>
+  </tr>`;
+  tokens.forEach((t,i)=>{
+    const isA=i===qi;
+    h+=`<tr style="background:${isA?'rgba(94,234,212,.08)':'transparent'};border-bottom:1px solid var(--border)">`;
+    h+=`<td style="padding:10px 14px;font:700 18px var(--mono);color:${isA?'var(--cyan)':'var(--text)'}">${t}${isA?' ◀':''}</td>`;
+    h+=`<td style="padding:10px 14px;font:700 15px var(--mono);color:var(--amber)">[${emb[i].map(v=>v.toFixed(1)).join(', ')}]</td>`;
+    h+=`</tr>`;
+  });
+  h+=`</table></div>`;
+
+  // ── STEP 0.5: RMSNorm ──
+  function rmsn_a(v){const sq=v.map(x=>x*x);const ms=sq.reduce((a,b)=>a+b)/v.length;const r=Math.sqrt(ms);return v.map(x=>x/r)}
+  const normed=tokens.map((_,i)=>rmsn_a(emb[i]));
+
+  h+=`<div style="background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin:10px 0">`;
+  h+=`<div style="font:700 12px var(--mono);color:var(--purple);margin-bottom:10px">STEP 0.5 — RMSNorm (normalize before attention)</div>`;
+  h+=`<div style="font:12px var(--mono);color:var(--text2);line-height:2.1">`;
+  h+=`<span style="color:var(--dim)">RMS(x) = √(mean(x²)),  norm = x / RMS,  γ = [1,1,1,1]</span><br><br>`;
+  tokens.forEach((t,ti)=>{
+    const sq=emb[ti].map(v=>v*v);
+    const ms=sq.reduce((a,b)=>a+b)/4;
+    const r=Math.sqrt(ms);
+    h+=`<span style="padding-left:8px;color:var(--purple)">"${t}": </span>`;
+    h+=`x²=[${sq.map(v=>v.toFixed(2)).join(',')}] → mean=${ms.toFixed(4)} → RMS=${r.toFixed(4)}<br>`;
+    h+=`<span style="padding-left:8px">[${emb[ti].map(v=>v.toFixed(1)).join(',')}] / ${r.toFixed(4)} = <span style="color:var(--purple);font-weight:700">[${normed[ti].map(v=>v.toFixed(4)).join(', ')}]</span></span><br>`;
+  });
+  h+=`</div></div>`;
+
+  // ── STEP 1: PROJECT NORMED EMBEDDINGS INTO Q, K, V ──
+  // Weight matrices
+  const Wq_a=[[0.6,0.2,0.1,0.3],[0.1,0.5,0.3,0.2],[0.2,0.1,0.7,0.4],[0.3,0.4,0.2,0.5]];
+  const Wk_a=[[0.4,0.3,0.2,0.1],[0.2,0.6,0.1,0.4],[0.1,0.2,0.5,0.3],[0.5,0.1,0.3,0.6]];
+  const Wv_a=[[0.3,0.1,0.4,0.5],[0.4,0.3,0.2,0.1],[0.2,0.6,0.3,0.2],[0.1,0.2,0.5,0.4]];
+  function mm_a(x,W){const r=[];for(let j=0;j<4;j++){let s=0;for(let i=0;i<4;i++)s+=x[i]*W[i][j];r.push(s)}return r}
+  const allQ_a=tokens.map((_,i)=>mm_a(normed[i],Wq_a));
+  const allK_a=tokens.map((_,i)=>mm_a(normed[i],Wk_a));
+  const allV_a=tokens.map((_,i)=>mm_a(normed[i],Wv_a));
+
+  h+=`<div style="background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin:10px 0">`;
+  h+=`<div style="font:700 12px var(--mono);color:var(--cyan);margin-bottom:10px">STEP 1 — PROJECT INTO Q, K, V (norm₁ × learned weight matrices)</div>`;
+  h+=`<div style="font:12px var(--mono);color:var(--text2);line-height:2.1">`;
+
+  // Show all 3 weight matrices
+  h+=`<span style="color:var(--dim)">Weight matrices (learned during training):</span><br>`;
+  [['W_Q','cyan',Wq_a],['W_K','amber',Wk_a],['W_V','green',Wv_a]].forEach(([name,col,W])=>{
+    h+=`<span style="padding-left:8px;color:var(--${col})">${name}:</span><br>`;
+    W.forEach(row=>{h+=`<span style="padding-left:16px">[${row.join(', ')}]</span><br>`});
+  });
+  h+=`<br>`;
+
+  // Q projection for every token — from normed
+  h+=`<span style="color:var(--cyan);font-weight:700">Q = norm₁ × W_Q:</span><br>`;
+  tokens.forEach((t,ti)=>{
+    h+=`<span style="padding-left:8px;color:var(--cyan)">Q_${t}:</span><br>`;
+    for(let j=0;j<4;j++){
+      const terms=normed[ti].map((v,i)=>`${v.toFixed(4)}×${Wq_a[i][j].toFixed(1)}`).join(' + ');
+      h+=`<span style="padding-left:16px">[${j}] = ${terms} = <span style="color:var(--cyan);font-weight:700">${allQ_a[ti][j].toFixed(4)}</span></span><br>`;
+    }
+    h+=`<span style="padding-left:8px">Q_${t} = <span style="color:var(--cyan);font-weight:700">[${allQ_a[ti].map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+  });
+
+  // K projection for every token — from normed
+  h+=`<span style="color:var(--amber);font-weight:700">K = norm₁ × W_K:</span><br>`;
+  tokens.forEach((t,ti)=>{
+    h+=`<span style="padding-left:8px;color:var(--amber)">K_${t}:</span><br>`;
+    for(let j=0;j<4;j++){
+      const terms=normed[ti].map((v,i)=>`${v.toFixed(4)}×${Wk_a[i][j].toFixed(1)}`).join(' + ');
+      h+=`<span style="padding-left:16px">[${j}] = ${terms} = <span style="color:var(--amber);font-weight:700">${allK_a[ti][j].toFixed(4)}</span></span><br>`;
+    }
+    h+=`<span style="padding-left:8px">K_${t} = <span style="color:var(--amber);font-weight:700">[${allK_a[ti].map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+  });
+
+  // V projection for every token — from normed
+  h+=`<span style="color:var(--green);font-weight:700">V = norm₁ × W_V:</span><br>`;
+  tokens.forEach((t,ti)=>{
+    h+=`<span style="padding-left:8px;color:var(--green)">V_${t}:</span><br>`;
+    for(let j=0;j<4;j++){
+      const terms=normed[ti].map((v,i)=>`${v.toFixed(4)}×${Wv_a[i][j].toFixed(1)}`).join(' + ');
+      h+=`<span style="padding-left:16px">[${j}] = ${terms} = <span style="color:var(--green);font-weight:700">${allV_a[ti][j].toFixed(4)}</span></span><br>`;
+    }
+    h+=`<span style="padding-left:8px">V_${t} = <span style="color:var(--green);font-weight:700">[${allV_a[ti].map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+  });
+
+  // Summary table
+  h+=`<span style="color:var(--dim)">Summary — all projected vectors:</span><br>`;
+  tokens.forEach((t,i)=>{
+    h+=`<span style="padding-left:8px">${t}: Q=[<span style="color:var(--cyan)">${allQ_a[i].map(v=>v.toFixed(3)).join(', ')}</span>] K=[<span style="color:var(--amber)">${allK_a[i].map(v=>v.toFixed(3)).join(', ')}</span>] V=[<span style="color:var(--green)">${allV_a[i].map(v=>v.toFixed(3)).join(', ')}</span>]</span><br>`;
+  });
+  h+=`</div></div>`;
+
+  // ── STEP-BY-STEP: DOT PRODUCT + SOFTMAX + WEIGHTED SUM for ALL tokens ──
+  // Now using the projected Q, K, V vectors
+  function dot_a(a,b){return a.reduce((s,v,i)=>s+v*b[i],0)}
+
+  h+=`<div style="background:var(--card2);border:1px solid rgba(94,234,212,.15);border-radius:10px;padding:16px 20px;margin:10px 0">`;
+  h+=`<div style="font:700 13px var(--mono);color:var(--cyan);margin-bottom:12px">STEP 2 — DOT PRODUCT, SOFTMAX, WEIGHTED SUM for every token</div>`;
+  h+=`<div style="font:12px var(--mono);color:var(--text2);line-height:2.1">`;
+
+  h+=`<span style="color:var(--dim)">Softmax formula: weight_i = e^(score_i) / Σ e^(score_j)</span><br><br>`;
+
+  const dk_single=Math.sqrt(4); // d_k = 4 for single head
+
+  tokens.forEach((qt,qi_t)=>{
+    const isActive=qi_t===qi;
+    const border=isActive?'border:1px solid rgba(94,234,212,.3);background:rgba(94,234,212,.04)':'border:1px solid var(--border)';
+    h+=`<div style="${border};border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+    h+=`<span style="color:var(--cyan);font-weight:700;font-size:14px">QUERY: "${qt}"${isActive?' ◀ selected':''}</span><br><br>`;
+
+    // Dot products: Q_qt · K_each, then scale by √d_k
+    const qi_scores_raw=tokens.map((_,j)=>dot_a(allQ_a[qi_t],allK_a[j]));
+    const qi_scores=qi_scores_raw.map(s=>s/dk_single);
+
+    h+=`<span style="color:var(--orange);font-weight:700">① SCALED DOT PRODUCT — (Q_${qt} · K_each) / √d_k:</span><br>`;
+    h+=`<span style="padding-left:12px;color:var(--dim)">d_k = 4 (full head dimension), √d_k = ${dk_single.toFixed(1)}</span><br>`;
+    tokens.forEach((kt,j)=>{
+      const terms=allQ_a[qi_t].map((v,d)=>`${v.toFixed(3)}×${allK_a[j][d].toFixed(3)}`).join(' + ');
+      h+=`<span style="padding-left:12px">Q_${qt} · K_${kt} = ${terms} = ${qi_scores_raw[j].toFixed(4)} / ${dk_single.toFixed(1)} = <span style="color:var(--amber);font-weight:700">${qi_scores[j].toFixed(4)}</span></span><br>`;
+    });
+    h+=`<br>`;
+
+    // Causal mask: token at position qi_t can only attend to positions 0..qi_t
+    h+=`<span style="color:var(--red);font-weight:700">①½ CAUSAL MASK</span> <span style="color:var(--dim)">(decoder-only: "${qt}" at pos ${qi_t} can only see positions 0..${qi_t})</span><br>`;
+    const qi_masked=qi_scores.map((s,j)=>j<=qi_t?s:-Infinity);
+    tokens.forEach((kt,j)=>{
+      if(j>qi_t){
+        h+=`<span style="padding-left:12px;color:var(--red)">S[${qt},${kt}] = ${qi_scores[j].toFixed(4)} → <span style="font-weight:700">−∞ (masked: future token)</span></span><br>`;
+      } else {
+        h+=`<span style="padding-left:12px">S[${qt},${kt}] = ${qi_scores[j].toFixed(4)} <span style="color:var(--green)">✓ visible</span></span><br>`;
+      }
+    });
+    h+=`<br>`;
+
+    // Softmax on masked scores
+    const qi_weights=softmax(qi_masked);
+
+    const e_vals=qi_masked.map(s=>s===-Infinity?0:Math.exp(s));
+    const e_sum=e_vals.reduce((a,b)=>a+b);
+
+    h+=`<span style="color:var(--purple);font-weight:700">② SOFTMAX (on masked scores):</span><br>`;
+    tokens.forEach((kt,j)=>{
+      if(j>qi_t){
+        h+=`<span style="padding-left:12px">e^(−∞) = <span style="color:var(--red)">0.0000</span> (masked out)</span><br>`;
+      } else {
+        h+=`<span style="padding-left:12px">e^${qi_masked[j].toFixed(4)} = <span style="color:var(--text)">${e_vals[j].toFixed(4)}</span></span><br>`;
+      }
+    });
+    h+=`<span style="padding-left:12px">Sum = ${e_sum.toFixed(4)}</span><br>`;
+    tokens.forEach((kt,j)=>{
+      h+=`<span style="padding-left:12px">weight("${kt}") = <span style="color:var(--purple);font-weight:700">${qi_weights[j].toFixed(4)} (${(qi_weights[j]*100).toFixed(1)}%)</span></span><br>`;
+    });
+    h+=`<span style="padding-left:12px;color:var(--dim)">Check: ${qi_weights.map(w=>w.toFixed(4)).join(' + ')} = ${qi_weights.reduce((a,b)=>a+b).toFixed(4)} ✓</span><br><br>`;
+
+    // Weighted sum of V vectors
+    const out_a=[0,0,0,0];
+    qi_weights.forEach((w,j)=>allV_a[j].forEach((v,d)=>out_a[d]+=w*v));
+
+    h+=`<span style="color:var(--green);font-weight:700">③ WEIGHTED SUM of V vectors:</span><br>`;
+    for(let d=0;d<4;d++){
+      const terms=tokens.map((kt,j)=>`${qi_weights[j].toFixed(4)}×${allV_a[j][d].toFixed(3)}`).join(' + ');
+      h+=`<span style="padding-left:12px">d${d}: ${terms} = <span style="color:var(--green);font-weight:700">${out_a[d].toFixed(4)}</span></span><br>`;
+    }
+    h+=`<span style="padding-left:12px">Weighted sum = <span style="color:var(--green)">[${out_a.map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+
+    // W_O projection — same matrix as Page 2
+    const Wo_p1=[[0.3,0.2,0.5,0.1],[0.1,0.6,0.2,0.4],[0.4,0.1,0.3,0.5],[0.2,0.5,0.4,0.3]];
+    const final_a=[];
+    for(let j=0;j<4;j++){let s=0;for(let i=0;i<4;i++)s+=out_a[i]*Wo_p1[i][j];final_a.push(s)}
+
+    h+=`<span style="color:var(--pink);font-weight:700">④ W_O PROJECTION (same W_O as Diagram 2):</span><br>`;
+    for(let j=0;j<4;j++){
+      const terms=out_a.map((v,i)=>`${v.toFixed(4)}×${Wo_p1[i][j].toFixed(1)}`).join(' + ');
+      h+=`<span style="padding-left:12px">[${j}] = ${terms} = <span style="color:var(--pink);font-weight:700">${final_a[j].toFixed(4)}</span></span><br>`;
+    }
+    h+=`<span style="padding-left:12px">Output for "${qt}" = <span style="color:var(--pink);font-weight:700">[${final_a.map(v=>v.toFixed(4)).join(', ')}]</span></span><br>`;
+    h+=`<span style="padding-left:12px;color:var(--dim)">Original embedding: [${emb[qi_t].map(v=>v.toFixed(1)).join(', ')}]</span>`;
+    h+=`</div>`;
+  });
+
+  h+=`</div></div>`;
+
+  // Output summary for ALL tokens — after W_O
+  const Wo_sum=[[0.3,0.2,0.5,0.1],[0.1,0.6,0.2,0.4],[0.4,0.1,0.3,0.5],[0.2,0.5,0.4,0.3]];
+  h+=`<div class="output-box">`;
+  h+=`<h4>FINAL OUTPUTS — all 3 tokens after attention + W_O</h4>`;
+  h+=`<div style="font:12.5px var(--mono);color:var(--text2);line-height:2.2;margin-top:8px">`;
+  tokens.forEach((qt,qi_t)=>{
+    const sc_t_raw=tokens.map((_,j)=>dot_a(allQ_a[qi_t],allK_a[j]));
+    const sc_t=sc_t_raw.map(s=>s/dk_single);
+    const sc_t_masked=sc_t.map((s,j)=>j<=qi_t?s:-Infinity);
+    const wt_t=softmax(sc_t_masked);
+    const ws_t=[0,0,0,0];wt_t.forEach((w,j)=>allV_a[j].forEach((v,d)=>ws_t[d]+=w*v));
+    const final_t=[];for(let j=0;j<4;j++){let s=0;for(let i=0;i<4;i++)s+=ws_t[i]*Wo_sum[i][j];final_t.push(s)}
+    const isActive=qi_t===qi;
+    h+=`<span style="${isActive?'color:var(--pink);font-weight:700':'color:var(--text2)'}">`;
+    h+=`"${qt}": [${emb[qi_t].map(v=>v.toFixed(1)).join(', ')}] → <span style="color:var(--pink);font-weight:700">[${final_t.map(v=>v.toFixed(4)).join(', ')}]</span>`;
+    h+=`${isActive?' ◀ selected':''}`;
+    h+=`</span><br>`;
+  });
+  h+=`</div>`;
+  h+=`<div class="out-note" style="margin-top:8px">Same W_O as Diagram 2. The outputs differ because single-head uses all 4 dims in one dot product, while multi-head splits into 2 independent subspaces.</div>`;
+  h+=`</div>`;
+
+  // ── RESIDUAL CONNECTION — what actually happens next ──
+  h+=`<div style="background:rgba(134,239,172,.04);border:2px solid rgba(134,239,172,.2);border-radius:10px;padding:16px 20px;margin-top:12px">`;
+  h+=`<div style="font:700 13px var(--mono);color:var(--green);margin-bottom:10px">WHAT HAPPENS NEXT — Residual Add + FFN</div>`;
+  h+=`<div style="font:13px var(--body);color:var(--text2);line-height:1.7">`;
+  h+=`The attention output does <strong style="color:var(--text)">not replace</strong> the original embedding. It is <em style="color:var(--green)">added</em> to it via the residual connection:`;
+  h+=`</div>`;
+  h+=`<div style="font:12px var(--mono);color:var(--text2);line-height:2.2;margin-top:10px">`;
+
+  // Show residual for the selected token
+  const qi_sel=qi;
+  const sc_sel_raw=tokens.map((_,j)=>dot_a(allQ_a[qi_sel],allK_a[j]));
+  const sc_sel=sc_sel_raw.map(s=>s/dk_single);
+  const sc_sel_masked=sc_sel.map((s,j)=>j<=qi_sel?s:-Infinity);
+  const wt_sel=softmax(sc_sel_masked);
+  const ws_sel=[0,0,0,0];wt_sel.forEach((w,j)=>allV_a[j].forEach((v,d)=>ws_sel[d]+=w*v));
+  const final_sel=[];for(let j=0;j<4;j++){let s=0;for(let i=0;i<4;i++)s+=ws_sel[i]*Wo_sum[i][j];final_sel.push(s)}
+  const resid_sel=emb[qi_sel].map((v,i)=>v+final_sel[i]);
+
+  h+=`<span style="color:var(--green);font-weight:700">⊕ Residual: resid₁ = x + Attention(RMSNorm(x))</span><br>`;
+  h+=`<span style="padding-left:12px;color:var(--dim)">Note: residual adds back the <em style="color:var(--text)">original x</em>, not the normed input. Attention operates on RMSNorm(x), but the skip connection bypasses the norm.</span><br>`;
+  h+=`<span style="padding-left:12px">x (original "${tokens[qi_sel]}"): <span style="color:var(--amber)">[${emb[qi_sel].map(v=>v.toFixed(1)).join(', ')}]</span></span><br>`;
+  h+=`<span style="padding-left:12px">Attention output: <span style="color:var(--pink)">[${final_sel.map(v=>v.toFixed(4)).join(', ')}]</span></span><br>`;
+  h+=`<span style="padding-left:12px">resid₁ = <span style="color:var(--green);font-weight:700">[${resid_sel.map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+
+  h+=`<span style="color:var(--dim)">Then: RMSNorm(resid₁) → FFN (SwiGLU) → ⊕ Residual #2 → next layer</span><br>`;
+  h+=`<span style="color:var(--dim)">See <strong style="color:var(--text)">Diagram 4 (The Stack)</strong> for the complete worked example through all steps.</span>`;
+  h+=`</div></div>`;
+
+  el.innerHTML=h;
+}
+
+// ═══════════════════════════════════════════
+// 2. MULTI-HEAD
+// ═══════════════════════════════════════════
+function renderMHA(){
+  const el=document.getElementById('mha-diagram');
+  let h='';
+
+  h+=`<div class="explain">
+    <span class="step">THE PROBLEM</span>
+    A single attention pass can only focus on <em>one type of relationship</em> at a time.
+    But language has many simultaneous relationships: syntax, coreference, meaning, proximity.
+    <br><br>
+    <span class="step">THE SOLUTION</span>
+    Run <em>multiple attention "heads" in parallel</em>, each with its own learned projections.
+    Each head learns to look for a <strong>different kind of relationship</strong>.
+    Then combine all their outputs through a mixing matrix (W_O).
+  </div>`;
+
+  h+=`<div class="mha-insight"><strong>Key Insight</strong><div class="sub">Each head independently learns what relationships to find. W_O is the only place where heads talk to each other.</div></div>`;
+
+  // Flow
+  h+=`<div class="center-col">`;
+  h+=`<div class="flow-box" style="background:rgba(134,239,172,.08);border-color:rgba(134,239,172,.3);color:var(--green)">MHA Output: [N × 4096]</div>`;
+  h+=`<div class="flow-arrow">↑</div>`;
+  h+=`<div class="flow-box" style="background:rgba(249,168,212,.08);border-color:rgba(249,168,212,.3);color:var(--pink)">W_O: mix all heads &nbsp;<span class="note">[4096×4096]</span></div>`;
+  h+=`<div class="flow-arrow">↑</div>`;
+  h+=`<div class="flow-box" style="background:rgba(253,186,116,.08);border-color:rgba(253,186,116,.3);color:var(--orange)">Concat: [128 × 32 heads] → [4096]</div>`;
+  h+=`<div class="flow-arrow">↑</div>`;
+  h+=`</div>`;
+
+  const heads=[
+    {name:'Head 1',role:'Syntax',ex:'"sat" → "cat" (subject-verb)',col:'cyan'},
+    {name:'Head 2',role:'Coreference',ex:'"she" → "Alice" (pronoun ref)',col:'pink'},
+    {name:'Head 3',role:'Semantic',ex:'meaning similarity patterns',col:'purple'},
+    {name:'Head 4',role:'Proximity',ex:'nearby word relationships',col:'green'},
+  ];
+  h+=`<div class="mha-heads">`;
+  heads.forEach(hd=>{
+    const c=`var(--${hd.col})`;
+    h+=`<div class="mha-head" style="background:rgba(${hd.col==='cyan'?'94,234,212':hd.col==='pink'?'249,168,212':hd.col==='purple'?'196,181,253':'134,239,172'},.06);border-color:rgba(${hd.col==='cyan'?'94,234,212':hd.col==='pink'?'249,168,212':hd.col==='purple'?'196,181,253':'134,239,172'},.25)">`;
+    h+=`<h4 style="color:${c}">${hd.name}</h4>`;
+    h+=`<div class="role" style="color:${c}">${hd.role}</div>`;
+    h+=`<hr style="border-color:${c}">`;
+    h+=`<div class="ops" style="color:${c}"><b>W_Q  W_K  W_V</b><br>↓<br><b>Q·Kᵀ / √d_k</b><br>↓ softmax<br><b>Attn × V</b></div>`;
+    h+=`<div class="example">${hd.ex}</div>`;
+    h+=`</div>`;
+  });
+  h+=`</div>`;
+
+  h+=`<div class="center-col" style="margin-top:6px">`;
+  h+=`<div class="flow-arrow">↑</div>`;
+  h+=`<div style="font:12px var(--body);color:var(--dim)">Split d_model into 32 heads (showing 4) — each head has d_k = 128 dims</div>`;
+  h+=`<div class="flow-arrow">↑</div>`;
+  h+=`<div class="flow-box" style="background:rgba(253,186,116,.08);border-color:rgba(253,186,116,.3);color:var(--orange)">Input: x = [d_model = 4096]</div>`;
+  h+=`</div>`;
+  h+=`<div style="text-align:center;margin-top:12px"><span class="note">On GPU: all 32 heads compute simultaneously as one batched matrix multiply — zero overhead</span></div>`;
+
+  // ── WORKED EXAMPLE: EVERY CALCULATION FOR EVERY TOKEN ──
+  h+=`<div style="background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-top:16px">`;
+  h+=`<div style="font:700 13px var(--mono);color:var(--purple);margin-bottom:10px">WORKED EXAMPLE — every calculation shown for every token</div>`;
+  h+=`<div style="font:13px var(--body);color:var(--dim);margin-bottom:12px">Same sentence "The cat sat", same embeddings, same W_Q/W_K/W_V as Diagram 1 — but now we <strong style="color:var(--purple)">split into 2 heads</strong> (dims [0,1] → Head 1, dims [2,3] → Head 2) instead of using all 4 dims at once. d_model=4, h=2, d_k=2.</div>`;
+
+  h+=`<div style="font:12px var(--mono);color:var(--text2);line-height:2.1;padding-left:4px">`;
+
+  const toks=['The','cat','sat'];
+  const xs=[[0.9,0.1,0.3,0.2],[0.2,0.8,0.6,0.1],[0.1,0.3,0.9,0.7]];
+
+  // RMSNorm first (same as Page 1)
+  function rmsn_m(v){const sq=v.map(x=>x*x);const ms=sq.reduce((a,b)=>a+b)/v.length;const r=Math.sqrt(ms);return v.map(x=>x/r)}
+  const normed_m=xs.map(e=>rmsn_m(e));
+
+  // Show inputs
+  h+=`<span style="color:var(--orange);font-weight:700">① INPUT: embeddings → RMSNorm (same as Diagram 1)</span><br>`;
+  toks.forEach((t,i)=>{h+=`<span style="padding-left:12px">${t}: [${xs[i].join(', ')}] → norm₁ = <span style="color:var(--purple);font-weight:700">[${normed_m[i].map(v=>v.toFixed(4)).join(', ')}]</span></span><br>`});
+  h+=`<br>`;
+
+  // SAME weight matrices as Page 1
+  const Wq=[[0.6,0.2,0.1,0.3],[0.1,0.5,0.3,0.2],[0.2,0.1,0.7,0.4],[0.3,0.4,0.2,0.5]];
+  const Wk=[[0.4,0.3,0.2,0.1],[0.2,0.6,0.1,0.4],[0.1,0.2,0.5,0.3],[0.5,0.1,0.3,0.6]];
+  const Wv=[[0.3,0.1,0.4,0.5],[0.4,0.3,0.2,0.1],[0.2,0.6,0.3,0.2],[0.1,0.2,0.5,0.4]];
+
+  function mm(x,W){const r=[];for(let j=0;j<4;j++){let s=0;for(let i=0;i<4;i++)s+=x[i]*W[i][j];r.push(s)}return r}
+
+  // Show W matrices
+  h+=`<span style="color:var(--cyan);font-weight:700">② WEIGHT MATRICES (identical to Diagram 1)</span><br>`;
+  [['W_Q',Wq],['W_K',Wk],['W_V',Wv]].forEach(([name,W])=>{
+    h+=`<span style="padding-left:12px;color:var(--dim)">${name}:</span><br>`;
+    W.forEach(row=>{h+=`<span style="padding-left:20px">[${row.join(', ')}]</span><br>`});
+  });
+  h+=`<br>`;
+
+  // PROJECT Q from normed embeddings
+  const allQ=normed_m.map(x=>mm(x,Wq));
+  h+=`<span style="color:var(--cyan);font-weight:700">③ PROJECT Q = norm₁ × W_Q — for every token</span><br><br>`;
+  toks.forEach((t,ti)=>{
+    h+=`<span style="padding-left:12px;color:var(--cyan)">Q_${t}:</span><br>`;
+    for(let j=0;j<4;j++){
+      const terms=normed_m[ti].map((v,i)=>`${v.toFixed(4)}×${Wq[i][j].toFixed(1)}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--cyan);font-weight:700">${allQ[ti][j].toFixed(4)}</span></span><br>`;
+    }
+    h+=`<span style="padding-left:12px">Q_${t} = <span style="color:var(--cyan);font-weight:700">[${allQ[ti].map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+  });
+
+  // PROJECT K from normed embeddings
+  const allK=normed_m.map(x=>mm(x,Wk));
+  h+=`<span style="color:var(--amber);font-weight:700">④ PROJECT K = norm₁ × W_K — for every token</span><br><br>`;
+  toks.forEach((t,ti)=>{
+    h+=`<span style="padding-left:12px;color:var(--amber)">K_${t}:</span><br>`;
+    for(let j=0;j<4;j++){
+      const terms=normed_m[ti].map((v,i)=>`${v.toFixed(4)}×${Wk[i][j].toFixed(1)}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--amber);font-weight:700">${allK[ti][j].toFixed(4)}</span></span><br>`;
+    }
+    h+=`<span style="padding-left:12px">K_${t} = <span style="color:var(--amber);font-weight:700">[${allK[ti].map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+  });
+
+  // PROJECT V from normed embeddings
+  const allV=normed_m.map(x=>mm(x,Wv));
+  h+=`<span style="color:var(--green);font-weight:700">⑤ PROJECT V = norm₁ × W_V — for every token</span><br><br>`;
+  toks.forEach((t,ti)=>{
+    h+=`<span style="padding-left:12px;color:var(--green)">V_${t}:</span><br>`;
+    for(let j=0;j<4;j++){
+      const terms=normed_m[ti].map((v,i)=>`${v.toFixed(4)}×${Wv[i][j].toFixed(1)}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--green);font-weight:700">${allV[ti][j].toFixed(4)}</span></span><br>`;
+    }
+    h+=`<span style="padding-left:12px">V_${t} = <span style="color:var(--green);font-weight:700">[${allV[ti].map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+  });
+
+  // SPLIT into heads for every token
+  h+=`<span style="color:var(--pink);font-weight:700">⑥ SPLIT INTO 2 HEADS — for every token</span><br>`;
+  h+=`<span style="padding-left:12px;color:var(--dim)">dims [0,1] → Head 1, dims [2,3] → Head 2</span><br><br>`;
+  h+=`<span style="padding-left:12px;color:var(--pink)">Head 1 (d_k = 2):</span><br>`;
+  toks.forEach((t,i)=>{
+    h+=`<span style="padding-left:20px">${t}: Q₁=[<span style="color:var(--cyan)">${allQ[i][0].toFixed(3)}, ${allQ[i][1].toFixed(3)}</span>]  K₁=[<span style="color:var(--amber)">${allK[i][0].toFixed(3)}, ${allK[i][1].toFixed(3)}</span>]  V₁=[<span style="color:var(--green)">${allV[i][0].toFixed(3)}, ${allV[i][1].toFixed(3)}</span>]</span><br>`;
+  });
+  h+=`<br><span style="padding-left:12px;color:var(--pink)">Head 2 (d_k = 2):</span><br>`;
+  toks.forEach((t,i)=>{
+    h+=`<span style="padding-left:20px">${t}: Q₂=[<span style="color:var(--cyan)">${allQ[i][2].toFixed(3)}, ${allQ[i][3].toFixed(3)}</span>]  K₂=[<span style="color:var(--amber)">${allK[i][2].toFixed(3)}, ${allK[i][3].toFixed(3)}</span>]  V₂=[<span style="color:var(--green)">${allV[i][2].toFixed(3)}, ${allV[i][3].toFixed(3)}</span>]</span><br>`;
+  });
+  h+=`<br>`;
+
+  const dk=Math.sqrt(2);
+
+  // HEAD 1 ATTENTION — every query token against every key token
+  h+=`<span style="color:var(--purple);font-weight:700">⑦ HEAD 1 ATTENTION — every query × every key</span><br>`;
+  h+=`<span style="padding-left:12px;color:var(--dim)">√d_k = √2 = ${dk.toFixed(4)}</span><br><br>`;
+
+  const h1_all_scores=[];
+  const h1_all_weights=[];
+  const h1_all_outputs=[];
+
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--purple)">Query: "${qt}" — dot product with every key, then ÷ √2:</span><br>`;
+    const q=[allQ[qi][0],allQ[qi][1]];
+    const scores=[];
+    toks.forEach((kt,ki)=>{
+      const k=[allK[ki][0],allK[ki][1]];
+      const d=q[0]*k[0]+q[1]*k[1];
+      const scaled=d/dk;
+      scores.push(scaled);
+      h+=`<span style="padding-left:20px">${qt}·${kt} = ${q[0].toFixed(3)}×${k[0].toFixed(3)} + ${q[1].toFixed(3)}×${k[1].toFixed(3)} = ${d.toFixed(4)} ÷ ${dk.toFixed(4)} = <span style="color:var(--amber);font-weight:700">${scaled.toFixed(4)}</span></span><br>`;
+    });
+    h1_all_scores.push(scores);
+
+    // Causal mask: token at position qi can only attend to positions 0..qi
+    const masked=scores.map((s,ki)=>ki<=qi?s:-Infinity);
+
+    // Softmax on masked scores
+    const mx=Math.max(...masked.filter(v=>v!==-Infinity));
+    const ex=masked.map(s=>s===-Infinity?0:Math.exp(s-mx));
+    const sm=ex.reduce((a,b)=>a+b);
+    const wt=ex.map(e=>e/sm);
+    h1_all_weights.push(wt);
+
+    if(qi<2){
+      h+=`<span style="padding-left:20px;color:var(--red)">Causal mask: "${qt}" (pos ${qi}) → mask positions ${qi+1}..2 to −∞</span><br>`;
+    }
+    h+=`<span style="padding-left:20px;color:var(--purple)">Softmax (after mask):</span><br>`;
+    toks.forEach((kt,ki)=>{
+      if(ki>qi){
+        h+=`<span style="padding-left:28px;color:var(--red)">e^(−∞) = 0 (masked)</span><br>`;
+      } else {
+        h+=`<span style="padding-left:28px">e^${masked[ki].toFixed(4)} = ${ex[ki].toFixed(4)}</span><br>`;
+      }
+    });
+    h+=`<span style="padding-left:28px">sum = ${ex.map(v=>v.toFixed(4)).join(' + ')} = ${sm.toFixed(4)}</span><br>`;
+    toks.forEach((kt,ki)=>{
+      h+=`<span style="padding-left:28px">w("${kt}") = ${ex[ki].toFixed(4)} / ${sm.toFixed(4)} = <span style="color:var(--purple);font-weight:700">${wt[ki].toFixed(4)} (${(wt[ki]*100).toFixed(1)}%)</span></span><br>`;
+    });
+
+    // Weighted sum of V₁
+    const out=[0,0];
+    wt.forEach((w,ki)=>{out[0]+=w*allV[ki][0];out[1]+=w*allV[ki][1]});
+    h1_all_outputs.push(out);
+
+    h+=`<span style="padding-left:20px;color:var(--green)">Weighted sum of V₁:</span><br>`;
+    for(let d=0;d<2;d++){
+      const terms=toks.map((kt,ki)=>`${wt[ki].toFixed(4)}×${allV[ki][d].toFixed(3)}`).join(' + ');
+      h+=`<span style="padding-left:28px">d${d}: ${terms} = <span style="color:var(--green);font-weight:700">${out[d].toFixed(4)}</span></span><br>`;
+    }
+    h+=`<span style="padding-left:20px">Head1 output for "${qt}" = <span style="color:var(--green);font-weight:700">[${out.map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+  });
+
+  // HEAD 2 ATTENTION — every query token against every key token
+  h+=`<span style="color:var(--purple);font-weight:700">⑧ HEAD 2 ATTENTION — every query × every key</span><br><br>`;
+
+  const h2_all_outputs=[];
+
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--purple)">Query: "${qt}":</span><br>`;
+    const q=[allQ[qi][2],allQ[qi][3]];
+    const scores=[];
+    toks.forEach((kt,ki)=>{
+      const k=[allK[ki][2],allK[ki][3]];
+      const d=q[0]*k[0]+q[1]*k[1];
+      const scaled=d/dk;
+      scores.push(scaled);
+      h+=`<span style="padding-left:20px">${qt}·${kt} = ${q[0].toFixed(3)}×${k[0].toFixed(3)} + ${q[1].toFixed(3)}×${k[1].toFixed(3)} = ${d.toFixed(4)} ÷ ${dk.toFixed(4)} = <span style="color:var(--amber);font-weight:700">${scaled.toFixed(4)}</span></span><br>`;
+    });
+
+    // Causal mask
+    const masked2=scores.map((s,ki)=>ki<=qi?s:-Infinity);
+
+    const mx=Math.max(...masked2.filter(v=>v!==-Infinity));
+    const ex=masked2.map(s=>s===-Infinity?0:Math.exp(s-mx));
+    const sm=ex.reduce((a,b)=>a+b);
+    const wt=ex.map(e=>e/sm);
+
+    if(qi<2){
+      h+=`<span style="padding-left:20px;color:var(--red)">Causal mask: "${qt}" (pos ${qi}) → mask positions ${qi+1}..2 to −∞</span><br>`;
+    }
+    h+=`<span style="padding-left:20px;color:var(--purple)">Softmax (after mask):</span><br>`;
+    toks.forEach((kt,ki)=>{
+      if(ki>qi){
+        h+=`<span style="padding-left:28px;color:var(--red)">e^(−∞) = 0 (masked)</span><br>`;
+      } else {
+        h+=`<span style="padding-left:28px">e^${masked2[ki].toFixed(4)} = ${ex[ki].toFixed(4)}</span><br>`;
+      }
+    });
+
+    const out=[0,0];
+    wt.forEach((w,ki)=>{out[0]+=w*allV[ki][2];out[1]+=w*allV[ki][3]});
+    h2_all_outputs.push(out);
+
+    h+=`<span style="padding-left:20px;color:var(--green)">Weighted sum of V₂:</span><br>`;
+    for(let d=0;d<2;d++){
+      const terms=toks.map((kt,ki)=>`${wt[ki].toFixed(4)}×${allV[ki][d+2].toFixed(3)}`).join(' + ');
+      h+=`<span style="padding-left:28px">d${d}: ${terms} = <span style="color:var(--green);font-weight:700">${out[d].toFixed(4)}</span></span><br>`;
+    }
+    h+=`<span style="padding-left:20px">Head2 output for "${qt}" = <span style="color:var(--green);font-weight:700">[${out.map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+  });
+
+  // CONCAT for every token
+  h+=`<span style="color:var(--orange);font-weight:700">⑨ CONCAT — glue head outputs for each token</span><br>`;
+  const all_concat=[];
+  toks.forEach((t,i)=>{
+    const c=[h1_all_outputs[i][0],h1_all_outputs[i][1],h2_all_outputs[i][0],h2_all_outputs[i][1]];
+    all_concat.push(c);
+    h+=`<span style="padding-left:12px">${t}: [${h1_all_outputs[i][0].toFixed(4)}, ${h1_all_outputs[i][1].toFixed(4)} | ${h2_all_outputs[i][0].toFixed(4)}, ${h2_all_outputs[i][1].toFixed(4)}] = <span style="color:var(--green);font-weight:700">[${c.map(v=>v.toFixed(4)).join(', ')}]</span></span><br>`;
+  });
+  h+=`<br>`;
+
+  // W_O for every token
+  const Wo=[[0.3,0.2,0.5,0.1],[0.1,0.6,0.2,0.4],[0.4,0.1,0.3,0.5],[0.2,0.5,0.4,0.3]];
+  h+=`<span style="color:var(--pink);font-weight:700">⑩ W_O PROJECTION — for every token</span><br>`;
+  h+=`<span style="padding-left:12px;color:var(--dim)">W_O:</span><br>`;
+  Wo.forEach(row=>{h+=`<span style="padding-left:20px">[${row.join(', ')}]</span><br>`});
+  h+=`<br>`;
+
+  toks.forEach((t,ti)=>{
+    h+=`<span style="padding-left:12px;color:var(--pink)">MHA output for "${t}" = concat_${t} × W_O:</span><br>`;
+    const mha=[];
+    for(let j=0;j<4;j++){
+      let s=0;for(let i=0;i<4;i++)s+=all_concat[ti][i]*Wo[i][j];
+      mha.push(s);
+      const terms=all_concat[ti].map((v,i)=>`${v.toFixed(4)}×${Wo[i][j].toFixed(1)}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--green);font-weight:700">${s.toFixed(4)}</span></span><br>`;
+    }
+    h+=`<span style="padding-left:12px">MHA("${t}") = <span style="color:var(--green);font-weight:700">[${mha.map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+  });
+
+  h+=`<span style="color:var(--dim)">Each token's output now contains information from all tokens, blended differently by each head's learned attention pattern.</span>`;
+
+  h+=`</div>`;
+
+  // FINAL OUTPUTS summary — with Page 1 comparison
+  h+=`<div style="background:rgba(134,239,172,.06);border:1px solid rgba(134,239,172,.2);border-radius:8px;padding:14px 16px;margin-top:14px">`;
+  h+=`<div style="font:700 13px var(--mono);color:var(--green);margin-bottom:10px">FINAL OUTPUTS — all 3 tokens after multi-head attention</div>`;
+  h+=`<div style="font:12.5px var(--mono);color:var(--text2);line-height:2.2">`;
+
+  // Also compute Page 1 single-head outputs for comparison
+  function dot_mha(a,b){return a.reduce((s,v,i)=>s+v*b[i],0)}
+  function sfm(arr){const m=Math.max(...arr),e=arr.map(v=>Math.exp(v-m)),s=e.reduce((a,b)=>a+b);return e.map(v=>v/s)}
+
+  toks.forEach((t,ti)=>{
+    // Page 2: multi-head output (concat × W_O)
+    const mha_out=[];
+    for(let j=0;j<4;j++){let s=0;for(let i=0;i<4;i++)s+=all_concat[ti][i]*Wo[i][j];mha_out.push(s)}
+
+    // Page 1: single-head output (no split, no W_O)
+    const p1_scores=toks.map((_,j)=>dot_mha(allQ[ti],allK[j]));
+    const p1_wts=sfm(p1_scores);
+    const p1_ws=[0,0,0,0];p1_wts.forEach((w,j)=>allV[j].forEach((v,d)=>p1_ws[d]+=w*v));
+    const p1_out=mm(p1_ws,Wo);
+
+    h+=`<span>"${t}": <span style="color:var(--amber)">[${xs[ti].join(', ')}]</span></span><br>`;
+    h+=`<span style="padding-left:24px">Diagram 1 (single-head): <span style="color:var(--cyan)">[${p1_out.map(v=>v.toFixed(4)).join(', ')}]</span></span><br>`;
+    h+=`<span style="padding-left:24px">Diagram 2 (multi-head):&nbsp; <span style="color:var(--green);font-weight:700">[${mha_out.map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+  });
+  h+=`</div>`;
+  h+=`<div style="font:11px var(--body);color:var(--dim);margin-top:8px">Same embeddings, same W_Q/W_K/W_V → same projected Q, K, V. But splitting into heads creates independent attention patterns per subspace. After concat + W_O mixing, the multi-head outputs differ from single-head — each head captured different relationships.</div>`;
+  h+=`</div>`;
+
+  h+=`</div>`;
+
+  el.innerHTML=h;
+}
+
+// ═══════════════════════════════════════════
+// 3. INPUT PIPELINE
+// ═══════════════════════════════════════════
+function renderInput(){
+  const el=document.getElementById('input-diagram');
+  let h='';
+
+  h+=`<div class="explain">
+    <span class="step">THE CHALLENGE</span>
+    Transformers can only work with <em>numbers</em>, not text. So we need a pipeline that converts
+    <strong>"The cat sat"</strong> into a matrix of vectors the model can process.
+    <br><br>
+    <span class="step">THE PIPELINE</span>
+    <strong>1.</strong> Split text into tokens (subword pieces)
+    → <strong>2.</strong> Look up each token's ID in the vocabulary
+    → <strong>3.</strong> Convert each ID into a learned embedding vector
+    → <strong>4.</strong> Add position encoding so the model knows word order
+  </div>`;
+
+  function vc(v,type){
+    const pos=v>=0;
+    let col,bg,bdr;
+    if(type==='emb'){col=pos?'var(--cyan)':'var(--blue)';bg=pos?'rgba(94,234,212,.12)':'rgba(147,197,253,.12)';bdr=pos?'rgba(94,234,212,.3)':'rgba(147,197,253,.3)'}
+    else{col=pos?'var(--orange)':'var(--amber)';bg=pos?'rgba(253,186,116,.12)':'rgba(252,211,77,.12)';bdr=pos?'rgba(253,186,116,.3)':'rgba(252,211,77,.3)'}
+    return`<span class="vec-cell" style="color:${col};background:${bg};border-color:${bdr}">${v.toFixed(1)}</span>`;
+  }
+
+  h+=`<div class="center-col">`;
+
+  // Stages 1-3
+  [{l:'① Raw Text',c:'"The cat sat"',col:'orange',n:'What the user types'},
+   {l:'② Tokenizer (BPE)',c:'[ "The",  "cat",  "sat" ]',col:'amber',n:'Split into subword pieces'},
+   {l:'③ Token IDs',c:'[ 464,   2857,   3520 ]',col:'cyan',n:'Vocabulary lookup (50K words)'}
+  ].forEach(s=>{
+    const rgba=s.col==='orange'?'253,186,116':s.col==='amber'?'252,211,77':'94,234,212';
+    h+=`<div class="pipe-stage">`;
+    h+=`<div class="pipe-box" style="background:rgba(${rgba},.06);border-color:rgba(${rgba},.25)">`;
+    h+=`<div class="label" style="color:var(--${s.col})">${s.l}</div>`;
+    h+=`<div class="content" style="color:var(--${s.col})">${s.c}</div>`;
+    h+=`</div><div class="pipe-note">${s.n}</div></div>`;
+    h+=`<div class="flow-arrow">↓</div>`;
+  });
+
+  // Stage 4: Embedding — same values as Pages 1 & 2
+  h+=`<div class="pipe-stage"><div class="pipe-box" style="background:rgba(196,181,253,.06);border-color:rgba(196,181,253,.25)">`;
+  h+=`<div class="label" style="color:var(--purple)">④ Embedding Lookup</div>`;
+  h+=`<div class="embed-grid">`;
+  const words=['The','cat','sat'];
+  const ids=['464','2857','3520'];
+  const raw_emb=[[.9,.1,.3,.2],[.2,.8,.6,.1],[.1,.3,.9,.7]];
+  words.forEach((w,i)=>{
+    h+=`<div class="embed-col"><div class="eid">e_${ids[i]}</div><div class="word">${w}</div><div class="tid">ID: ${ids[i]}</div><div style="margin-top:3px;color:var(--dim)">↓</div>`;
+    raw_emb[i].forEach(v=>{h+=vc(v,'emb')});
+    h+=`</div>`;
+  });
+  h+=`</div></div><div class="pipe-note">Each ID → learned<br>d_model vector<br><b style="color:var(--dim)">4D toy (4096 in real)</b></div></div>`;
+  h+=`<div class="flow-arrow">+</div>`;
+
+  // Stage 5: Position encoding
+  const pos_enc=[[0.84,0.54,0.00,1.00],[0.91,0.42,0.01,1.00],[0.14,0.99,0.01,1.00]];
+  h+=`<div class="pipe-stage"><div class="pipe-box" style="background:rgba(253,186,116,.06);border-color:rgba(253,186,116,.25)">`;
+  h+=`<div class="label" style="color:var(--orange)">⑤ Position Encoding</div>`;
+  h+=`<div class="pos-grid">`;
+  pos_enc.forEach((pv,i)=>{
+    h+=`<div class="pos-col"><div class="pid">pos_${i}</div>`;
+    pv.forEach(v=>{h+=vc(v,'pos')});
+    h+=`</div>`;
+  });
+  h+=`</div></div><div class="pipe-note">Sinusoidal or RoPE<br>Tells model word <em>order</em></div></div>`;
+  h+=`<div class="flow-arrow">↓</div>`;
+
+  // Result
+  h+=`<div class="flow-box" style="background:rgba(134,239,172,.08);border-color:rgba(134,239,172,.3);color:var(--green);font-size:13px;padding:12px 24px">Transformer Input = embedding + position = <em style="color:var(--amber)">what</em> + <em style="color:var(--amber)">where</em></div>`;
+  h+=`<div style="margin-top:6px"><span class="note">→ These vectors enter Block 1 of the transformer stack (Diagram 4), then attention (Diagrams 1 & 2)</span></div>`;
+
+  // ── WORKED EXAMPLE — all 3 tokens ──
+  h+=`<div style="background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-top:14px">`;
+  h+=`<div style="font:700 13px var(--mono);color:var(--orange);margin-bottom:10px">WORKED EXAMPLE — computing the input for every token</div>`;
+  h+=`<div style="font:13px var(--body);color:var(--dim);margin-bottom:10px">Same embeddings [0.9,0.1,0.3,0.2], [0.2,0.8,0.6,0.1], [0.1,0.3,0.9,0.7] used in Diagrams 1 & 2.</div>`;
+  h+=`<div style="font:12.5px var(--mono);color:var(--text2);line-height:2.2;padding-left:8px">`;
+
+  h+=`<span style="color:var(--dim)">PE formula: PE(pos,2i) = sin(pos/10000^(2i/d)), PE(pos,2i+1) = cos(pos/10000^(2i/d))</span><br><br>`;
+
+  words.forEach((w,ti)=>{
+    h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+    h+=`<span style="color:var(--cyan);font-weight:700;font-size:14px">"${w}" — position ${ti}, ID ${ids[ti]}</span><br><br>`;
+
+    h+=`<span style="color:var(--cyan);font-weight:700">① TOKEN ID LOOKUP</span><br>`;
+    h+=`<span style="padding-left:12px">"${w}" → vocabulary table → <span style="color:var(--amber);font-weight:700">ID ${ids[ti]}</span></span><br><br>`;
+
+    h+=`<span style="color:var(--purple);font-weight:700">② EMBEDDING LOOKUP</span> <span style="color:var(--dim)">(row ${ids[ti]} from learned table)</span><br>`;
+    h+=`<span style="padding-left:12px">embedding[${ids[ti]}] = <span style="color:var(--cyan);font-weight:700">[${raw_emb[ti].map(v=>v.toFixed(1)).join(', ')}]</span></span><br><br>`;
+
+    h+=`<span style="color:var(--orange);font-weight:700">③ POSITION ENCODING</span> <span style="color:var(--dim)">(position ${ti})</span><br>`;
+    h+=`<span style="padding-left:12px">pos_encoding[${ti}] = <span style="color:var(--orange);font-weight:700">[${pos_enc[ti].map(v=>v.toFixed(2)).join(', ')}]</span></span><br><br>`;
+
+    h+=`<span style="color:var(--green);font-weight:700">④ ADD — dimension by dimension:</span><br>`;
+    const dimL=['d₀','d₁','d₂','d₃'];
+    const result=raw_emb[ti].map((v,d)=>v+pos_enc[ti][d]);
+    dimL.forEach((d,di)=>{
+      h+=`<span style="padding-left:12px">${d}: <span style="color:var(--cyan)">${raw_emb[ti][di].toFixed(1)}</span> + <span style="color:var(--orange)">${pos_enc[ti][di].toFixed(2)}</span> = <span style="color:var(--green);font-weight:700">${result[di].toFixed(2)}</span></span><br>`;
+    });
+    h+=`<span style="padding-left:12px">transformer_input["${w}"] = <span style="color:var(--green);font-weight:700">[${result.map(v=>v.toFixed(2)).join(', ')}]</span></span>`;
+    h+=`</div>`;
+  });
+
+  h+=`<br><span style="color:var(--dim)">These 3 vectors enter the transformer stack. In Diagrams 1 & 2, we used the raw embeddings [0.9,0.1,0.3,0.2] etc. for simplicity — in a real model, the position-added versions above would be used instead.</span>`;
+  h+=`</div></div>`;
+
+  h+=`</div>`;
+
+  el.innerHTML=h;
+}
+
+// ═══════════════════════════════════════════
+// 4. THE STACK
+// ═══════════════════════════════════════════
+function renderStack(){
+  const layer=parseInt(document.getElementById('laySlider').value);
+  document.getElementById('layVal').textContent=layer;
+  const el=document.getElementById('stack-diagram');
+
+  function lc(n){
+    if(n<=8)return{col:'var(--blue)',bg:'rgba(147,197,253,.08)',bdr:'rgba(147,197,253,.25)',zone:'Surface'};
+    if(n<=16)return{col:'var(--cyan)',bg:'rgba(94,234,212,.08)',bdr:'rgba(94,234,212,.25)',zone:'Syntax'};
+    if(n<=24)return{col:'var(--purple)',bg:'rgba(196,181,253,.08)',bdr:'rgba(196,181,253,.25)',zone:'Semantics'};
+    return{col:'var(--pink)',bg:'rgba(249,168,212,.08)',bdr:'rgba(249,168,212,.25)',zone:'Output'};
+  }
+
+  let note='';
+  if(layer<=4)note='Early layers: learning basic features like word identity, part-of-speech, and local patterns.';
+  else if(layer<=12)note='Early-mid layers: building syntax trees, phrase structure, and basic semantic relationships.';
+  else if(layer<=22)note='Mid-late layers: resolving coreference, long-range dependencies, and abstract reasoning.';
+  else note='Late layers: formatting task-specific output patterns for next-token prediction.';
+
+  let h=`<div class="explain">
+    <span class="step">THE ARCHITECTURE</span>
+    The transformer is a <em>stack of 32 identical blocks</em>. Each block runs the same operations — attention + feedforward — but with <strong>different learned weights</strong>.
+    Information flows upward, getting progressively more abstract. Early layers see words; late layers see meaning.
+  </div>`;
+
+  h+=`<div class="stack-wrap">`;
+
+  // Layer bars
+  h+=`<div style="flex:0 0 auto">`;
+  h+=`<div style="text-align:center;margin-bottom:4px"><span class="flow-box" style="background:rgba(134,239,172,.08);border-color:rgba(134,239,172,.3);color:var(--green);font-size:10px;padding:6px 14px">Output Head</span></div>`;
+  h+=`<div class="flow-arrow">↑</div><div class="stack-col">`;
+  for(let i=32;i>=1;i--){
+    const c=lc(i),isA=i===layer;
+    h+=`<div class="layer-bar${isA?' active':''}" style="background:${c.bg};border-color:${isA?c.col:c.bdr};color:${c.col}" onclick="document.getElementById('laySlider').value=${i};renderStack()">L${i}${isA?' ◀':''}</div>`;
+  }
+  h+=`</div><div class="flow-arrow">↑</div>`;
+  h+=`<div style="text-align:center"><span class="flow-box" style="background:rgba(253,186,116,.08);border-color:rgba(253,186,116,.3);color:var(--orange);font-size:10px;padding:6px 14px">Input Embeddings</span></div></div>`;
+
+  // Detail panel
+  const c=lc(layer);
+  h+=`<div class="stack-detail" style="border-color:${c.bdr}">`;
+  h+=`<h3 style="color:${c.col}">Layer ${layer} — ${c.zone}</h3>`;
+  h+=`<div class="desc">${note}</div>`;
+  h+=`<div class="arch" style="background:${c.bg};color:${c.col};border-color:${c.bdr}">RMSNorm → MHA → +Residual → RMSNorm → FFN → +Residual</div>`;
+  h+=`<div class="params">`;
+  h+=`<b>Attention:</b> W_Q, W_K, W_V, W_O = 4 × 4096² = <b>67M params</b><br>`;
+  h+=`<b>FFN:</b> W_up + W_gate + W_down = 3 × 4096 × 11008 = <b>135M params</b><br>`;
+  h+=`<b>Total per layer: ~202M parameters</b>`;
+  h+=`</div>`;
+  h+=`<div class="stack-legend">`;
+  h+=`<span><span class="dot" style="background:var(--blue)"></span>1–8: Surface</span>`;
+  h+=`<span><span class="dot" style="background:var(--cyan)"></span>9–16: Syntax</span>`;
+  h+=`<span><span class="dot" style="background:var(--purple)"></span>17–24: Semantics</span>`;
+  h+=`<span><span class="dot" style="background:var(--pink)"></span>25–32: Output</span>`;
+  h+=`</div>`;
+  h+=`<div style="margin-top:10px;font:11px var(--mono);color:var(--dim)">LLaMA-7B total: 32 × ~202M = 6.5B + embeddings = 6.7B params</div>`;
+
+  // ── WORKED EXAMPLE ──
+  h+=`<div style="background:var(--card2);border:1px solid rgba(134,239,172,.15);border-radius:10px;padding:16px 20px;margin-top:14px">`;
+  h+=`<div style="font:700 13px var(--mono);color:var(--green);margin-bottom:10px">WORKED EXAMPLE — "sat" passing through Layer ${layer} (no steps skipped)</div>`;
+  h+=`<div style="font:13px var(--body);color:var(--dim);margin-bottom:10px">Continuing our "The cat sat" example. After input pipeline (Diagram 3), here's what happens inside one layer.</div>`;
+  h+=`<div style="font:12.5px var(--mono);color:var(--text2);line-height:2.2;padding-left:8px">`;
+
+  h+=`<span style="color:var(--orange);font-weight:700">INPUT</span><br>`;
+  h+=`<span style="padding-left:16px">x = embedding for "sat" = <span style="color:var(--amber);font-weight:700">[0.1, 0.3, 0.9, 0.7]</span></span><br><br>`;
+
+  // RMSNorm with full γ
+  h+=`<span style="color:var(--cyan);font-weight:700">① RMSNorm</span><br>`;
+  const x=[0.1,0.3,0.9,0.7];
+  const sq=x.map(v=>v*v);
+  const meanSq=sq.reduce((a,b)=>a+b)/4;
+  const rms_val=Math.sqrt(meanSq);
+  const normed=x.map(v=>v/rms_val);
+  h+=`<span style="padding-left:16px">x² = [${sq.map(v=>v.toFixed(2)).join(', ')}]</span><br>`;
+  h+=`<span style="padding-left:16px">mean(x²) = (${sq.map(v=>v.toFixed(2)).join(' + ')}) / 4 = ${(sq.reduce((a,b)=>a+b)).toFixed(2)} / 4 = <span style="color:var(--text)">${meanSq.toFixed(4)}</span></span><br>`;
+  h+=`<span style="padding-left:16px">RMS = √${meanSq.toFixed(4)} = <span style="color:var(--text);font-weight:700">${rms_val.toFixed(4)}</span></span><br>`;
+  h+=`<span style="padding-left:16px">x / RMS = [${x.map((v,i)=>`${v.toFixed(1)}/${rms_val.toFixed(4)}`).join(', ')}]</span><br>`;
+  h+=`<span style="padding-left:16px">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= [${normed.map(v=>v.toFixed(4)).join(', ')}]</span><br><br>`;
+
+  // γ scale
+  const gamma=[1.0,1.0,1.0,1.0];
+  const after_gamma=normed.map((v,i)=>v*gamma[i]);
+  h+=`<span style="padding-left:16px;color:var(--cyan)">× learned scale γ = [${gamma.join(', ')}]</span> <span style="color:var(--dim)">(per-dimension, learned during training)</span><br>`;
+  after_gamma.forEach((v,i)=>{
+    h+=`<span style="padding-left:16px">&nbsp; d${i}: ${normed[i].toFixed(4)} × ${gamma[i].toFixed(1)} = <span style="color:var(--cyan);font-weight:700">${v.toFixed(4)}</span></span><br>`;
+  });
+  h+=`<span style="padding-left:16px">norm₁ = <span style="color:var(--cyan);font-weight:700">[${after_gamma.map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+
+  // MHA — compute on norm₁ (RMSNorm'd embeddings), same W matrices as Pages 1, 2, 6
+  h+=`<span style="color:var(--purple);font-weight:700">② MULTI-HEAD ATTENTION on norm₁</span> <span style="color:var(--dim)">(full mechanism shown in Diagrams 1 & 2)</span><br>`;
+  h+=`<span style="padding-left:16px;color:var(--dim)">Input to attention is norm₁ (not raw embedding) — this is the real transformer pipeline</span><br><br>`;
+
+  const Wq_s=[[0.6,0.2,0.1,0.3],[0.1,0.5,0.3,0.2],[0.2,0.1,0.7,0.4],[0.3,0.4,0.2,0.5]];
+  const Wk_s=[[0.4,0.3,0.2,0.1],[0.2,0.6,0.1,0.4],[0.1,0.2,0.5,0.3],[0.5,0.1,0.3,0.6]];
+  const Wv_s=[[0.3,0.1,0.4,0.5],[0.4,0.3,0.2,0.1],[0.2,0.6,0.3,0.2],[0.1,0.2,0.5,0.4]];
+  const Wo_s=[[0.3,0.2,0.5,0.1],[0.1,0.6,0.2,0.4],[0.4,0.1,0.3,0.5],[0.2,0.5,0.4,0.3]];
+
+  // RMSNorm ALL 3 token embeddings first (same γ=[1,1,1,1])
+  const all_emb=[[0.9,0.1,0.3,0.2],[0.2,0.8,0.6,0.1],[0.1,0.3,0.9,0.7]];
+  function rmsn(v){const sq=v.map(x=>x*x);const ms=sq.reduce((a,b)=>a+b)/v.length;const r=Math.sqrt(ms);return v.map(x=>x/r)}
+  const all_normed=all_emb.map(e=>rmsn(e));
+
+  h+=`<span style="padding-left:16px;color:var(--dim)">RMSNorm all 3 tokens (γ=[1,1,1,1]):</span><br>`;
+  ['The','cat','sat'].forEach((t,i)=>{
+    h+=`<span style="padding-left:16px">${t}: [${all_emb[i].join(',')}] → norm=[${all_normed[i].map(v=>v.toFixed(4)).join(', ')}]</span><br>`;
+  });
+  h+=`<br>`;
+
+  // Project Q, K, V from normed embeddings
+  function mm_s(x,W){const r=[];for(let j=0;j<W[0].length;j++){let s=0;for(let i=0;i<x.length;i++)s+=x[i]*W[i][j];r.push(s)}return r}
+  function dot_s(a,b){return a.reduce((s,v,i)=>s+v*b[i],0)}
+  function sfm_s(arr){const m=Math.max(...arr),e=arr.map(v=>Math.exp(v-m)),s=e.reduce((a,b)=>a+b);return e.map(v=>v/s)}
+
+  const allQ_s=all_normed.map(e=>mm_s(e,Wq_s));
+  const allK_s=all_normed.map(e=>mm_s(e,Wk_s));
+  const allV_s=all_normed.map(e=>mm_s(e,Wv_s));
+
+  h+=`<span style="padding-left:16px;color:var(--dim)">Project from normed vectors (same W_q, W_k, W_v as Diagrams 1,2,6):</span><br>`;
+  ['The','cat','sat'].forEach((t,i)=>{
+    h+=`<span style="padding-left:16px">${t}: Q=[${allQ_s[i].map(v=>v.toFixed(4)).join(', ')}]  K=[${allK_s[i].map(v=>v.toFixed(4)).join(', ')}]</span><br>`;
+  });
+  h+=`<br>`;
+
+  // sat = index 2: dot product / sqrt(d_k), causal mask, softmax, weighted sum
+  const dk_s=Math.sqrt(4); // d_k = 4
+  const sat_sc_raw=[dot_s(allQ_s[2],allK_s[0]),dot_s(allQ_s[2],allK_s[1]),dot_s(allQ_s[2],allK_s[2])];
+  const sat_sc=sat_sc_raw.map(s=>s/dk_s);
+  // sat is at position 2 → can see all 3 tokens (0,1,2) → no masking needed
+  const sat_wts=sfm_s(sat_sc);
+  const sat_ws=[0,0,0,0];sat_wts.forEach((w,j)=>allV_s[j].forEach((v,d)=>sat_ws[d]+=w*v));
+  const mha_out=mm_s(sat_ws,Wo_s);
+
+  h+=`<span style="padding-left:16px;color:var(--purple)">sat's attention (Q_sat · each K) / √d_k,  d_k=4, √d_k=${dk_s.toFixed(1)}:</span><br>`;
+  h+=`<span style="padding-left:16px">raw scores = [${sat_sc_raw.map(v=>v.toFixed(4)).join(', ')}]</span><br>`;
+  h+=`<span style="padding-left:16px">scaled = [${sat_sc.map(v=>v.toFixed(4)).join(', ')}]</span><br>`;
+  h+=`<span style="padding-left:16px">weights = softmax = [${sat_wts.map(v=>v.toFixed(4)).join(', ')}]</span><br>`;
+  h+=`<span style="padding-left:16px">weighted_sum = [${sat_ws.map(v=>v.toFixed(4)).join(', ')}]</span><br>`;
+  h+=`<span style="padding-left:16px">MHA(norm₁) = weighted_sum × W_O = <span style="color:var(--purple);font-weight:700">[${mha_out.map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+
+  // Residual 1
+  h+=`<span style="color:var(--green);font-weight:700">③ RESIDUAL CONNECTION #1</span> <span style="color:var(--dim)">(add original input back)</span><br>`;
+  const resid1=x.map((v,i)=>v+mha_out[i]);
+  x.forEach((v,i)=>{
+    h+=`<span style="padding-left:16px">d${i}: ${v.toFixed(1)} + ${mha_out[i].toFixed(4)} = <span style="color:var(--green);font-weight:700">${resid1[i].toFixed(4)}</span></span><br>`;
+  });
+  h+=`<span style="padding-left:16px">resid₁ = <span style="color:var(--green);font-weight:700">[${resid1.map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+
+  // RMSNorm 2 — full computation
+  h+=`<span style="color:var(--cyan);font-weight:700">④ RMSNorm #2</span> <span style="color:var(--dim)">(same operation, on resid₁)</span><br>`;
+  const sq2=resid1.map(v=>v*v);
+  const meanSq2=sq2.reduce((a,b)=>a+b)/4;
+  const rms2=Math.sqrt(meanSq2);
+  const normed2=resid1.map(v=>v/rms2);
+  const gamma2=[1.0,1.0,1.0,1.0];
+  const after_gamma2=normed2.map((v,i)=>v*gamma2[i]);
+  h+=`<span style="padding-left:16px">resid₁² = [${sq2.map(v=>v.toFixed(2)).join(', ')}]</span><br>`;
+  h+=`<span style="padding-left:16px">mean = ${(sq2.reduce((a,b)=>a+b)).toFixed(2)} / 4 = ${meanSq2.toFixed(4)}</span><br>`;
+  h+=`<span style="padding-left:16px">RMS = √${meanSq2.toFixed(4)} = ${rms2.toFixed(4)}</span><br>`;
+  h+=`<span style="padding-left:16px">resid₁ / RMS = [${normed2.map(v=>v.toFixed(4)).join(', ')}]</span><br>`;
+  h+=`<span style="padding-left:16px">× γ₂ = [${gamma2.join(', ')}]</span><br>`;
+  after_gamma2.forEach((v,i)=>{
+    h+=`<span style="padding-left:16px">&nbsp; d${i}: ${normed2[i].toFixed(4)} × ${gamma2[i]} = <span style="color:var(--cyan);font-weight:700">${v.toFixed(4)}</span></span><br>`;
+  });
+  h+=`<span style="padding-left:16px">norm₂ = <span style="color:var(--cyan);font-weight:700">[${after_gamma2.map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+
+  // FFN — same W₁, W₂ as Diagram 6 (simple: W₁ → ReLU → W₂)
+  h+=`<span style="color:var(--orange);font-weight:700">⑤ FFN (Feed-Forward Network)</span><br>`;
+  h+=`<span style="padding-left:16px;color:var(--dim)">Same W₁ (4→6) and W₂ (6→4) as Diagram 6. H = norm₂ × W₁, Z = ReLU(H), FFN = Z × W₂</span><br><br>`;
+
+  // Same matrices as Page 6
+  const W1_s=[[0.5,-0.6,0.3,-0.2,0.4,-0.5],[-0.3,0.4,-0.6,0.5,-0.2,0.3],[0.2,-0.4,0.5,-0.3,0.6,-0.1],[-0.4,0.3,-0.2,0.4,-0.5,0.6]];
+  const W2_s=[[0.3,-0.2,0.5,0.1],[-0.4,0.3,0.1,-0.2],[0.2,-0.1,-0.3,0.4],[0.1,0.5,-0.2,0.3],[-0.3,0.2,0.4,-0.1],[0.5,-0.4,0.1,0.2]];
+
+  h+=`<span style="padding-left:16px;color:var(--dim)">W₁ (4×6) — learned, expands to hidden dim:</span><br>`;
+  W1_s.forEach(row=>{h+=`<span style="padding-left:24px">[${row.join(', ')}]</span><br>`});
+  h+=`<br>`;
+  h+=`<span style="padding-left:16px;color:var(--dim)">W₂ (6×4) — learned, compresses back:</span><br>`;
+  W2_s.forEach(row=>{h+=`<span style="padding-left:24px">[${row.join(', ')}]</span><br>`});
+  h+=`<br>`;
+
+  // H = norm₂ × W₁
+  const H_s=mm_s(after_gamma2,W1_s);
+  h+=`<span style="padding-left:16px;color:var(--orange)">H = norm₂ × W₁ [4→6]:</span><br>`;
+  for(let j=0;j<6;j++){
+    const terms=after_gamma2.map((v,i)=>`${v.toFixed(4)}×${W1_s[i][j].toFixed(1)}`).join(' + ');
+    h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--orange);font-weight:700">${H_s[j].toFixed(4)}</span></span><br>`;
+  }
+  h+=`<br>`;
+
+  // Z = ReLU(H)
+  h+=`<span style="padding-left:16px;color:var(--pink)">Z = ReLU(H):</span><br>`;
+  h+=`<span style="padding-left:16px;color:var(--dim)">ReLU(x) = max(0, x) — negative values become 0</span><br>`;
+  const Z_s=H_s.map(v=>Math.max(0,v));
+  for(let j=0;j<6;j++){
+    const killed=H_s[j]<=0;
+    h+=`<span style="padding-left:20px">[${j}]: max(0, ${H_s[j].toFixed(4)}) = <span style="color:${killed?'var(--red)':'var(--pink)'};font-weight:700">${Z_s[j].toFixed(4)}${killed?' ← KILLED':''}</span></span><br>`;
+  }
+  h+=`<br>`;
+
+  // FFN = Z × W₂
+  const ffn_out=mm_s(Z_s,W2_s);
+  h+=`<span style="padding-left:16px;color:var(--orange)">FFN = Z × W₂ [6→4]:</span><br>`;
+  for(let j=0;j<4;j++){
+    const terms=Z_s.map((v,i)=>`${v.toFixed(4)}×${W2_s[i][j].toFixed(1)}`).join(' + ');
+    h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--orange);font-weight:700">${ffn_out[j].toFixed(4)}</span></span><br>`;
+  }
+  h+=`<span style="padding-left:16px">FFN output = <span style="color:var(--orange);font-weight:700">[${ffn_out.map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
+
+  // Residual 2
+  h+=`<span style="color:var(--green);font-weight:700">⑥ RESIDUAL CONNECTION #2</span><br>`;
+  const resid2=resid1.map((v,i)=>v+ffn_out[i]);
+  resid1.forEach((v,i)=>{
+    h+=`<span style="padding-left:16px">d${i}: ${resid1[i].toFixed(4)} + ${ffn_out[i].toFixed(4)} = <span style="color:var(--green);font-weight:700">${resid2[i].toFixed(4)}</span></span><br>`;
+  });
+  h+=`<span style="padding-left:16px">Layer ${layer} output = <span style="color:var(--green);font-weight:700">[${resid2.map(v=>v.toFixed(4)).join(', ')}]</span> → enters Layer ${Math.min(layer+1,32)}</span>`;
+
+  h+=`</div></div>`;
+
+  h+=`</div></div>`;
+
+  el.innerHTML=h;
+}
+
+// ═══════════════════════════════════════════
+// 5. OUTPUT & PREDICTION
+// ═══════════════════════════════════════════
+function renderOutput(){
+  const temp=parseInt(document.getElementById('tempSlider').value)/10;
+  document.getElementById('tempVal').textContent=temp.toFixed(1);
+  const el=document.getElementById('output-diagram');
+
+  const vocab=['the','cat','sat','on','mat','is','a','and','you','it'];
+  const raw=[1.2,.8,.5,4.5,2.1,.3,.6,.2,.1,.4];
+  const sc=raw.map(l=>l/temp);
+  const pr=softmax(sc);const mp=Math.max(...pr);const mi=pr.indexOf(mp);
+
+  let h=`<div class="explain">
+    <span class="step">THE FINAL STEP</span>
+    After passing through all layers, the last hidden state is a 4-dimensional vector (4096 in a real model).
+    Now we need to convert that into a <em>probability over every word in the vocabulary</em>.
+    Our toy vocabulary has 10 words (a real model: 32,000+).
+    <br><br>
+    <span class="step">HOW</span>
+    <strong>1.</strong> A linear layer projects [4] → [10] (one score per word = "logits")
+    <br><strong>2.</strong> Divide by <em>temperature</em> to control randomness
+    <br><strong>3.</strong> Softmax converts scores to probabilities
+    <br><strong>4.</strong> Pick the most likely token (greedy decoding) or sample from this distribution
+  </div>`;
+
+  h+=`<div class="center-col">`;
+  [{l:'Last hidden state: [4 dims]',col:'purple',n:'Output of final layer'},
+   {l:'Linear: [4] → [10]',col:'pink',n:'One score per vocabulary word'},
+   {l:`Logits: [${raw.slice(0,5).map(l=>l.toFixed(1)).join(', ')}, ...]`,col:'orange',n:'Raw unnormalized scores'}
+  ].forEach(s=>{
+    const rgba=s.col==='purple'?'196,181,253':s.col==='pink'?'249,168,212':'253,186,116';
+    h+=`<div style="display:flex;align-items:center;gap:12px"><div class="flow-box" style="background:rgba(${rgba},.08);border-color:rgba(${rgba},.3);color:var(--${s.col})">${s.l}</div><span class="note">${s.n}</span></div>`;
+    h+=`<div class="flow-arrow">↓</div>`;
+  });
+  h+=`<div style="font:700 13px var(--mono);color:var(--orange)">÷ temperature (${temp.toFixed(1)})</div>`;
+  h+=`<div class="flow-arrow">↓</div>`;
+  h+=`<div class="flow-box" style="background:rgba(196,181,253,.08);border-color:rgba(196,181,253,.3);color:var(--purple)">Softmax → probabilities</div>`;
+  h+=`<div class="flow-arrow">↓</div>`;
+  h+=`</div>`;
+
+  // ── FULL WORKED CALCULATION ──
+  h+=`<div style="background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin:12px 0">`;
+  h+=`<div style="font:700 13px var(--mono);color:var(--pink);margin-bottom:10px">WORKED CALCULATION — predicting the next word after "The cat sat"</div>`;
+  h+=`<div style="font:12.5px var(--mono);color:var(--text2);line-height:2.2;padding-left:8px">`;
+
+  // Show raw logits
+  h+=`<span style="color:var(--orange);font-weight:700">① RAW LOGITS</span> <span style="color:var(--dim)">(output of the linear layer — one score per vocab word)</span><br>`;
+  h+=`<span style="padding-left:16px">`;
+  vocab.forEach((w,i)=>{h+=`${w}=<span style="color:var(--amber)">${raw[i].toFixed(1)}</span>${i<vocab.length-1?', &nbsp;':''}`});
+  h+=`</span><br><br>`;
+
+  // Temperature division
+  h+=`<span style="color:var(--orange);font-weight:700">② DIVIDE BY TEMPERATURE (${temp.toFixed(1)})</span> <span style="color:var(--dim)">(${temp<1?'sharpens':'flattens'} the distribution)</span><br>`;
+  h+=`<span style="padding-left:16px">`;
+  vocab.forEach((w,i)=>{
+    h+=`${raw[i].toFixed(1)}/${temp.toFixed(1)}=<span style="color:var(--amber)">${sc[i].toFixed(2)}</span>${i<vocab.length-1?', &nbsp;':''}`;
+  });
+  h+=`</span><br><br>`;
+
+  // Softmax: show e^ values
+  const e_vals_out=sc.map(s=>Math.exp(s-Math.max(...sc))); // numerically stable
+  const e_sum_out=e_vals_out.reduce((a,b)=>a+b);
+  h+=`<span style="color:var(--purple);font-weight:700">③ SOFTMAX</span><br>`;
+  h+=`<span style="padding-left:16px;color:var(--dim)">Formula: prob(word_i) = e^(scaled_logit_i) / Σ e^(scaled_logit_j)</span><br><br>`;
+
+  // Show e^ for ALL values
+  h+=`<span style="padding-left:16px;color:var(--dim)">Exponentiate each scaled logit:</span><br>`;
+  vocab.forEach((w,i)=>{
+    h+=`<span style="padding-left:24px">e^${sc[i].toFixed(2)} = <span style="color:var(--text)">${e_vals_out[i].toFixed(4)}</span> &nbsp;(${w})</span><br>`;
+  });
+
+  h+=`<br><span style="padding-left:16px">Sum of all e^ values = ${e_vals_out.map(v=>v.toFixed(4)).join(' + ')}</span><br>`;
+  h+=`<span style="padding-left:16px">&nbsp;&nbsp;&nbsp;= <span style="color:var(--text);font-weight:700">${e_sum_out.toFixed(4)}</span></span><br><br>`;
+
+  // Final probabilities for ALL values
+  h+=`<span style="padding-left:16px;color:var(--dim)">Divide each by sum to get probability:</span><br>`;
+  vocab.forEach((w,i)=>{
+    h+=`<span style="padding-left:24px">P("${w}") = ${e_vals_out[i].toFixed(4)} / ${e_sum_out.toFixed(4)} = <span style="color:var(--purple);font-weight:700">${(pr[i]*100).toFixed(2)}%</span></span><br>`;
+  });
+  h+=`<br>`;
+
+  h+=`<span style="padding-left:16px;color:var(--dim)">Check: ${pr.map(p=>(p*100).toFixed(1)+'%').join(' + ')} ≈ 100% ✓</span><br><br>`;
+
+  // Winner
+  h+=`<span style="color:var(--green);font-weight:700">④ PREDICTION</span><br>`;
+  h+=`<span style="padding-left:16px">Highest probability: <span style="color:var(--green);font-weight:700">"${vocab[mi]}" at ${(mp*100).toFixed(1)}%</span></span><br>`;
+  h+=`<span style="padding-left:16px;color:var(--dim)">In greedy decoding, we always pick the highest. With sampling, we randomly draw from the full distribution — so even low-probability words have a chance.</span>`;
+
+  h+=`</div></div>`;
+
+  // Bar chart
+  h+=`<div class="chart-wrap"><div class="chart-title">Probability distribution over vocabulary (10 toy words)</div>`;
+  h+=`<div class="bars">`;
+  pr.forEach((p,i)=>{
+    const ht=Math.round(p/Math.max(mp*1.05,.001)*180);
+    const isM=i===mi;
+    const col=isM?'var(--green)':(p>.08?'var(--purple)':'var(--dim2)');
+    const bg=isM?'rgba(134,239,172,.15)':(p>.08?'rgba(196,181,253,.1)':'rgba(255,255,255,.03)');
+    const bdr=isM?'rgba(134,239,172,.4)':(p>.08?'rgba(196,181,253,.2)':'var(--border)');
+    h+=`<div class="bar-col"><div class="bar-pct" style="color:${col}">${(p*100).toFixed(1)}%</div>`;
+    h+=`<div class="bar-fill" style="height:${Math.max(ht,3)}px;background:${bg};border-color:${bdr}"></div>`;
+    h+=`<div class="bar-word" style="color:${isM?'var(--green)':'var(--dim)'}">${vocab[i]}</div></div>`;
+  });
+  h+=`<div class="bar-col"><div class="bar-pct"></div><div class="bar-fill" style="height:2px;background:rgba(255,255,255,.03);border-color:var(--border)"></div><div class="bar-word" style="color:var(--dim2)">...50K</div></div>`;
+  h+=`</div>`;
+
+  h+=`<div style="text-align:center;margin-top:14px"><div class="pred-callout"><span class="pw">Predicted: "${vocab[mi]}"</span><br><span class="pp">${(mp*100).toFixed(1)}% probability</span></div></div>`;
+
+  let nt,nc,nbg,nbdr;
+  if(temp<.5){nt='Low temperature → peaked distribution → nearly deterministic (greedy)';nc='var(--blue)';nbg='rgba(147,197,253,.1)';nbdr='rgba(147,197,253,.25)'}
+  else if(temp<1.2){nt='Normal temperature → balanced → natural text generation';nc='var(--green)';nbg='rgba(134,239,172,.1)';nbdr='rgba(134,239,172,.25)'}
+  else if(temp<2){nt='High temperature → flatter → more creative and diverse output';nc='var(--orange)';nbg='rgba(253,186,116,.1)';nbdr='rgba(253,186,116,.25)'}
+  else{nt='Very high temperature → nearly uniform → random, incoherent output';nc='var(--red)';nbg='rgba(252,165,165,.1)';nbdr='rgba(252,165,165,.25)'}
+  h+=`<div style="text-align:center;margin-top:10px"><span class="temp-note" style="color:${nc};background:${nbg};border-color:${nbdr}">${nt}</span></div>`;
+  h+=`</div>`;
+
+  el.innerHTML=h;
+}
+
+// ═══════════════════════════════════════════
+// 6. FORWARD & BACKWARD PASS
+// ═══════════════════════════════════════════
+function renderBackward(){
+  const el=document.getElementById('backward-diagram');
+  let h='';
+  const $ = (v,n=4) => v.toFixed(n);
+
+  // Utility functions
+  function mm(A,B){return A.map(a=>{const r=[];for(let j=0;j<B[0].length;j++){let s=0;for(let i=0;i<a.length;i++)s+=a[i]*B[i][j];r.push(s)}return r})}
+  function T(M){const R=[];for(let j=0;j<M[0].length;j++)R.push(M.map(r=>r[j]));return R}
+  function sfm(arr){const m=Math.max(...arr),e=arr.map(v=>Math.exp(v-m)),s=e.reduce((a,b)=>a+b);return e.map(v=>v/s)}
+
+  // Our data
+  const X=[[0.9,0.1,0.3,0.2],[0.2,0.8,0.6,0.1],[0.1,0.3,0.9,0.7]];
+  const toks=['The','cat','sat'];
+
+  h+=`<div class="explain">
+    <span class="step">THE PIPELINE</span>
+    We trace the <strong>complete forward pass</strong> then <strong>backpropagate gradients</strong> through every step.
+    Same W_q, W_k, W_v as Diagrams 1 & 2. Same "The cat sat" embeddings throughout.
+    <br><br>
+    <span class="step">FORWARD:</span> X → RMSNorm → Q,K,V → S=QKᵀ/√d_k → A=softmax(S) → O_raw=AV → O=O_raw·W_O → resid₁=X+O → norm₂=RMSNorm(resid₁) → H=norm₂·W₁ → Z=ReLU(H) → Y=ZW₂
+    <br>
+    <span class="step">BACKWARD:</span> dL/dY → dL/dW₂ → dL/dZ → dL/dH → dL/dW₁ → dL/dO → dL/dA → dL/dS → dL/dQ,dK,dV → dL/dWq,Wk,Wv
+  </div>`;
+
+  // Helper to show a matrix
+  function showMat(name,M,color,dp=4){
+    h+=`<span style="padding-left:12px;color:var(--${color})">${name}:</span><br>`;
+    M.forEach((r,i)=>{h+=`<span style="padding-left:20px">[${r.map(v=>$(v,dp)).join(', ')}]</span><br>`});
+  }
+  // Helper to show matrix multiply with full arithmetic
+  function showMM(label,A,B,C,colA,colB,colC,dp=4){
+    h+=`<span style="color:var(--${colC});font-weight:700">${label}:</span><br>`;
+    C.forEach((r,ri)=>{
+      r.forEach((v,ci)=>{
+        const terms=A[ri].map((a,k)=>`${$(a,dp)}×${$(B[k][ci],dp)}`).join(' + ');
+        h+=`<span style="padding-left:12px">[${ri},${ci}] = ${terms} = <span style="color:var(--${colC});font-weight:700">${$(v,dp)}</span></span><br>`;
+      });
+    });
+  }
+
+  h+=`<div style="font:12px var(--mono);color:var(--text2);line-height:2.0">`;
+
+  // ═══════════════════════════════
+  // FORWARD PASS
+  // ═══════════════════════════════
+  h+=`<div style="background:var(--card2);border:1px solid rgba(94,234,212,.2);border-radius:10px;padding:16px 20px;margin-bottom:14px">`;
+  h+=`<div style="font:700 16px var(--mono);color:var(--cyan);margin-bottom:14px">═══ FORWARD PASS ═══</div>`;
+
+  // Same W matrices as Pages 1 & 2
+  const Wq=[[0.6,0.2,0.1,0.3],[0.1,0.5,0.3,0.2],[0.2,0.1,0.7,0.4],[0.3,0.4,0.2,0.5]];
+  const Wk=[[0.4,0.3,0.2,0.1],[0.2,0.6,0.1,0.4],[0.1,0.2,0.5,0.3],[0.5,0.1,0.3,0.6]];
+  const Wv=[[0.3,0.1,0.4,0.5],[0.4,0.3,0.2,0.1],[0.2,0.6,0.3,0.2],[0.1,0.2,0.5,0.4]];
+
+  // RMSNorm first (same as all other pages)
+  function rmsn_b(v){const sq=v.map(x=>x*x);const ms=sq.reduce((a,b)=>a+b)/v.length;const r=Math.sqrt(ms);return v.map(x=>x/r)}
+  const Xn=X.map(e=>rmsn_b(e));
+
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--purple);font-weight:700;font-size:14px">STEP 0: RMSNorm (same as all other diagrams)</span><br><br>`;
+  toks.forEach((t,i)=>{
+    const sq=X[i].map(v=>v*v);const ms=sq.reduce((a,b)=>a+b)/4;const r=Math.sqrt(ms);
+    h+=`<span style="padding-left:12px">${t}: [${X[i].join(',')}] \u2192 RMS=${r.toFixed(4)} \u2192 <span style="color:var(--purple);font-weight:700">[${Xn[i].map(v=>v.toFixed(4)).join(', ')}]</span></span><br>`;
+  });
+  h+=`</div>`;
+
+  // Step 1: Q = Xn\u00b7Wq, K = Xn\u00b7Wk, V = Xn\u00b7Wv
+  const Q=mm(Xn,Wq), K=mm(Xn,Wk), V=mm(Xn,Wv);
+
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--cyan);font-weight:700;font-size:14px">STEP 1: Q = norm\u2081\u00b7W_q, K = norm\u2081\u00b7W_k, V = norm\u2081\u00b7W_v</span><br><br>`;
+  showMat('W_q',Wq,'cyan',1);h+=`<br>`;
+  showMat('W_k',Wk,'amber',1);h+=`<br>`;
+  showMat('W_v',Wv,'green',1);h+=`<br>`;
+
+  h+=`<span style="color:var(--cyan);font-weight:700">Q = norm\u2081 \u00d7 W_q:</span><br>`;
+  toks.forEach((t,ti)=>{
+    for(let j=0;j<4;j++){
+      const terms=Xn[ti].map((v,i)=>`${$(v)}\u00d7${$(Wq[i][j],1)}`).join(' + ');
+      h+=`<span style="padding-left:12px">Q[${t}][${j}] = ${terms} = <span style="color:var(--cyan);font-weight:700">${$(Q[ti][j])}</span></span><br>`;
+    }
+  });
+  h+=`<br>`;
+  h+=`<span style="color:var(--amber);font-weight:700">K = norm\u2081 \u00d7 W_k:</span><br>`;
+  toks.forEach((t,ti)=>{
+    for(let j=0;j<4;j++){
+      const terms=Xn[ti].map((v,i)=>`${$(v)}\u00d7${$(Wk[i][j],1)}`).join(' + ');
+      h+=`<span style="padding-left:12px">K[${t}][${j}] = ${terms} = <span style="color:var(--amber);font-weight:700">${$(K[ti][j])}</span></span><br>`;
+    }
+  });
+  h+=`<br>`;
+  h+=`<span style="color:var(--green);font-weight:700">V = norm\u2081 \u00d7 W_v:</span><br>`;
+  toks.forEach((t,ti)=>{
+    for(let j=0;j<4;j++){
+      const terms=Xn[ti].map((v,i)=>`${$(v)}\u00d7${$(Wv[i][j],1)}`).join(' + ');
+      h+=`<span style="padding-left:12px">V[${t}][${j}] = ${terms} = <span style="color:var(--green);font-weight:700">${$(V[ti][j])}</span></span><br>`;
+    }
+  });
+  h+=`<br>`;
+  showMat('Q',Q,'cyan');showMat('K',K,'amber');showMat('V',V,'green');
+  h+=`</div>`;
+
+  // Step 2: S = QK^T / sqrt(d_k)
+  function dot2(a,b){return a.reduce((s,v,i)=>s+v*b[i],0)}
+  const dk_b=Math.sqrt(4); // d_k = 4
+  const S_raw=Q.map(q=>K.map(k=>dot2(q,k)));
+  const S=S_raw.map(r=>r.map(v=>v/dk_b));
+
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">STEP 2: S = QKᵀ / √d_k (3×3 score matrix, d_k=4, √d_k=${dk_b.toFixed(1)})</span><br><br>`;
+  S_raw.forEach((r,qi)=>{
+    r.forEach((v,ki)=>{
+      const terms=Q[qi].map((qv,d)=>`${$(qv)}×${$(K[ki][d])}`).join(' + ');
+      h+=`<span style="padding-left:12px">S[${toks[qi]},${toks[ki]}] = (${terms}) / ${dk_b.toFixed(1)} = ${$(v)} / ${dk_b.toFixed(1)} = <span style="color:var(--amber);font-weight:700">${$(S[qi][ki])}</span></span><br>`;
+    });
+  });
+  h+=`<br>`;showMat('S (before mask)',S,'amber');
+
+  // Step 2.5: Apply causal mask
+  const S_masked=S.map((r,qi)=>r.map((v,ki)=>ki<=qi?v:-Infinity));
+
+  h+=`<br><span style="color:var(--red);font-weight:700">STEP 2.5: Causal Mask</span><br>`;
+  h+=`<span style="color:var(--dim)">Decoder-only: token at position i can only attend to positions 0..i. Future positions → −∞</span><br><br>`;
+  S_masked.forEach((r,qi)=>{
+    r.forEach((v,ki)=>{
+      if(ki>qi){
+        h+=`<span style="padding-left:12px;color:var(--red)">S[${toks[qi]},${toks[ki]}] = ${$(S[qi][ki])} → <span style="font-weight:700">−∞ (masked)</span></span><br>`;
+      } else {
+        h+=`<span style="padding-left:12px">S[${toks[qi]},${toks[ki]}] = ${$(S[qi][ki])} <span style="color:var(--green)">✓</span></span><br>`;
+      }
+    });
+  });
+  h+=`</div>`;
+
+  // Step 3: A = softmax(S_masked) row-wise
+  const A=S_masked.map(r=>sfm(r));
+
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--purple);font-weight:700;font-size:14px">STEP 3: A = softmax(S_masked) row-wise</span><br>`;
+  h+=`<span style="color:var(--dim)">Masked positions contribute 0 weight after softmax (e^(−∞) = 0)</span><br><br>`;
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--purple)">Row "${qt}" (sees positions 0..${qi}):</span><br>`;
+    const e_vals=S_masked[qi].map(s=>s===-Infinity?0:Math.exp(s));
+    const e_sum=e_vals.reduce((a,b)=>a+b);
+    toks.forEach((kt,ki)=>{
+      if(ki>qi){
+        h+=`<span style="padding-left:20px;color:var(--red)">e^(−∞) = 0</span><br>`;
+      } else {
+        h+=`<span style="padding-left:20px">e^${$(S_masked[qi][ki])} = ${$(e_vals[ki])}</span><br>`;
+      }
+    });
+    h+=`<span style="padding-left:20px">sum = ${$(e_sum)}</span><br>`;
+    toks.forEach((kt,ki)=>{
+      h+=`<span style="padding-left:20px">A[${qt},${kt}] = <span style="color:var(--purple);font-weight:700">${$(A[qi][ki])}</span></span><br>`;
+    });
+    h+=`<br>`;
+  });
+  showMat('A (causal)',A,'purple');
+  h+=`</div>`;
+
+  // Step 4: O = AV
+  const O_raw=A.map(a=>{const out=[0,0,0,0];a.forEach((w,j)=>V[j].forEach((v,d)=>out[d]+=w*v));return out});
+
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--green);font-weight:700;font-size:14px">STEP 4: O_raw = AV (3×4 weighted sum)</span><br><br>`;
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--green)">O_raw[${qt}]:</span><br>`;
+    for(let d=0;d<4;d++){
+      const terms=toks.map((kt,ki)=>`${$(A[qi][ki])}×${$(V[ki][d])}`).join(' + ');
+      h+=`<span style="padding-left:20px">d${d}: ${terms} = <span style="color:var(--green);font-weight:700">${$(O_raw[qi][d])}</span></span><br>`;
+    }
+    h+=`<br>`;
+  });
+  showMat('O_raw',O_raw,'green');
+  h+=`</div>`;
+
+  // Step 5: O = O_raw × W_O (same W_O as Pages 1, 2, 4)
+  const Wo_b=[[0.3,0.2,0.5,0.1],[0.1,0.6,0.2,0.4],[0.4,0.1,0.3,0.5],[0.2,0.5,0.4,0.3]];
+  const O=O_raw.map(r=>{const o=[];for(let j=0;j<4;j++){let s=0;for(let i=0;i<4;i++)s+=r[i]*Wo_b[i][j];o.push(s)}return o});
+
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--pink);font-weight:700;font-size:14px">STEP 5: O = O_raw × W_O (same W_O as Diagrams 1, 2, 4)</span><br><br>`;
+  showMat('W_O (4×4)',Wo_b,'dim',1);h+=`<br>`;
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--pink)">O[${qt}]:</span><br>`;
+    for(let j=0;j<4;j++){
+      const terms=O_raw[qi].map((v,i)=>`${$(v)}×${$(Wo_b[i][j],1)}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--pink);font-weight:700">${$(O[qi][j])}</span></span><br>`;
+    }
+    h+=`<br>`;
+  });
+  showMat('O (after W_O)',O,'pink');
+  h+=`</div>`;
+
+  // Step 6: Residual connection — add original embedding back
+  const resid1_b=X.map((x,i)=>x.map((v,j)=>v+O[i][j]));
+
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--green);font-weight:700;font-size:14px">STEP 6: resid₁ = X + O (residual connection, same as Diagram 4)</span><br><br>`;
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--green)">resid₁[${qt}]:</span><br>`;
+    for(let d=0;d<4;d++){
+      h+=`<span style="padding-left:20px">d${d}: ${$(X[qi][d],1)} + ${$(O[qi][d])} = <span style="color:var(--green);font-weight:700">${$(resid1_b[qi][d])}</span></span><br>`;
+    }
+    h+=`<br>`;
+  });
+  showMat('resid₁',resid1_b,'green');
+  h+=`</div>`;
+
+  // Step 7: RMSNorm #2 on resid₁
+  function rmsn_b2(v){const sq=v.map(x=>x*x);const ms=sq.reduce((a,b)=>a+b)/v.length;const r=Math.sqrt(ms);return v.map(x=>x/r)}
+  const norm2_b=resid1_b.map(r=>rmsn_b2(r));
+
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--purple);font-weight:700;font-size:14px">STEP 7: norm₂ = RMSNorm(resid₁) (same as Diagram 4)</span><br><br>`;
+  toks.forEach((qt,qi)=>{
+    const sq=resid1_b[qi].map(v=>v*v);const ms=sq.reduce((a,b)=>a+b)/4;const r=Math.sqrt(ms);
+    h+=`<span style="padding-left:12px">${qt}: RMS=${$(r)} → <span style="color:var(--purple);font-weight:700">[${norm2_b[qi].map(v=>$(v)).join(', ')}]</span></span><br>`;
+  });
+  showMat('norm₂',norm2_b,'purple');
+  h+=`</div>`;
+
+  // Step 8: H = norm₂ × W₁
+  const W1=[[0.5,-0.6,0.3,-0.2,0.4,-0.5],[-0.3,0.4,-0.6,0.5,-0.2,0.3],[0.2,-0.4,0.5,-0.3,0.6,-0.1],[-0.4,0.3,-0.2,0.4,-0.5,0.6]];
+  const H=mm(norm2_b,W1);
+
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--orange);font-weight:700;font-size:14px">STEP 8: H = norm₂ × W₁ (FFN hidden layer, 4→6, same W₁ as Diagram 4)</span><br><br>`;
+  showMat('W₁ (4×6)',W1,'dim',1);h+=`<br>`;
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--orange)">H[${qt}]:</span><br>`;
+    for(let j=0;j<6;j++){
+      const terms=O[qi].map((v,i)=>`${$(v)}×${$(W1[i][j],1)}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--orange);font-weight:700">${$(H[qi][j])}</span></span><br>`;
+    }
+    h+=`<br>`;
+  });
+  showMat('H',H,'orange');
+  h+=`</div>`;
+
+  // Step 6: Z = ReLU(H)
+  const Z=H.map(r=>r.map(v=>Math.max(0,v)));
+
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--pink);font-weight:700;font-size:14px">STEP 9: Z = ReLU(H)</span><br>`;
+  h+=`<span style="color:var(--dim)">ReLU(x) = max(0, x) — negative values become 0</span><br><br>`;
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--pink)">Z[${qt}]:</span><br>`;
+    for(let j=0;j<6;j++){
+      const hv=H[qi][j];
+      const zv=Z[qi][j];
+      const killed=hv<=0;
+      h+=`<span style="padding-left:20px">[${j}]: max(0, ${$(hv)}) = <span style="color:${killed?'var(--red)':'var(--pink)'};font-weight:700">${$(zv)}${killed?' ← KILLED':''}  </span></span><br>`;
+    }
+    h+=`<br>`;
+  });
+  showMat('Z',Z,'pink');
+  h+=`</div>`;
+
+  // Step 7: Y = ZW₂
+  const W2=[[0.3,-0.2,0.5,0.1],[-0.4,0.3,0.1,-0.2],[0.2,-0.1,-0.3,0.4],[0.1,0.5,-0.2,0.3],[-0.3,0.2,0.4,-0.1],[0.5,-0.4,0.1,0.2]];
+  const Y=mm(Z,W2);
+
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--cyan);font-weight:700;font-size:14px">STEP 10: Y = ZW₂ (FFN output, 6→4)</span><br><br>`;
+  showMat('W₂ (6×4)',W2,'dim',1);h+=`<br>`;
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--cyan)">Y[${qt}]:</span><br>`;
+    for(let j=0;j<4;j++){
+      const terms=Z[qi].map((v,i)=>`${$(v)}×${$(W2[i][j],1)}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--cyan);font-weight:700">${$(Y[qi][j])}</span></span><br>`;
+    }
+    h+=`<br>`;
+  });
+  showMat('Y (final output)',Y,'cyan');
+  h+=`</div>`;
+
+  h+=`</div>`; // end forward
+
+  // ═══════════════════════════════
+  // BACKWARD PASS
+  // ═══════════════════════════════
+  h+=`<div style="background:var(--card2);border:1px solid rgba(252,211,77,.2);border-radius:10px;padding:16px 20px;margin-top:14px">`;
+  h+=`<div style="font:700 16px var(--mono);color:var(--amber);margin-bottom:14px">═══ BACKWARD PASS ═══</div>`;
+  h+=`<span style="color:var(--dim)">Toy loss for calculus clarity: Loss = ½ Σ(Y²) (MSE with target = 0), so dL/dY = Y</span><br>`;
+  h+=`<span style="color:var(--dim);font-size:10px">Note: Real LLMs use cross-entropy on logits. We use MSE here so every gradient step is transparent.</span><br><br>`;
+
+  const dLdY=Y.map(r=>r.map(v=>v));
+
+  // dL/dY
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 1: dL/dY = Y</span><br><br>`;
+  showMat('dL/dY',dLdY,'amber');
+  h+=`</div>`;
+
+  // dL/dW₂ = Zᵀ @ dL/dY
+  const dLdW2=mm(T(Z),dLdY);
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 2: dL/dW₂ = Zᵀ · dL/dY (6×4)</span><br>`;
+  h+=`<span style="color:var(--dim)">Chain rule: Y = ZW₂ → dL/dW₂ = Zᵀ · dL/dY</span><br><br>`;
+  const ZT=T(Z);
+  dLdW2.forEach((r,ri)=>{
+    r.forEach((v,ci)=>{
+      const terms=ZT[ri].map((z,k)=>`${$(z)}×${$(dLdY[k][ci])}`).join(' + ');
+      h+=`<span style="padding-left:12px">[${ri},${ci}] = ${terms} = <span style="color:var(--amber);font-weight:700">${$(v,6)}</span></span><br>`;
+    });
+  });
+  h+=`<br>`;showMat('dL/dW₂',dLdW2,'amber',6);
+  h+=`</div>`;
+
+  // dL/dZ = dL/dY @ W₂ᵀ
+  const dLdZ=mm(dLdY,T(W2));
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 3: dL/dZ = dL/dY · W₂ᵀ (3×6)</span><br>`;
+  h+=`<span style="color:var(--dim)">Chain rule: Z → Y = ZW₂ → dL/dZ = dL/dY · W₂ᵀ</span><br><br>`;
+  const W2T=T(W2);
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--amber)">dL/dZ[${qt}]:</span><br>`;
+    for(let j=0;j<6;j++){
+      const terms=dLdY[qi].map((v,k)=>`${$(v)}×${$(W2T[k][j],1)}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--amber);font-weight:700">${$(dLdZ[qi][j],6)}</span></span><br>`;
+    }
+    h+=`<br>`;
+  });
+  showMat('dL/dZ',dLdZ,'amber',6);
+  h+=`</div>`;
+
+  // dL/dH = dL/dZ ⊙ ReLU'(H)
+  const dLdH=dLdZ.map((r,i)=>r.map((v,j)=>H[i][j]>0?v:0));
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 4: dL/dH = dL/dZ ⊙ ReLU'(H)</span><br>`;
+  h+=`<span style="color:var(--dim)">ReLU'(x) = 1 if x > 0, else 0. Gradient dies where ReLU killed the activation.</span><br><br>`;
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--amber)">dL/dH[${qt}]:</span><br>`;
+    for(let j=0;j<6;j++){
+      const alive=H[qi][j]>0;
+      h+=`<span style="padding-left:20px">[${j}]: H=${$(H[qi][j])} ${alive?'> 0 → pass':'≤ 0 → BLOCK'}: ${$(dLdZ[qi][j],6)} × ${alive?'1':'0'} = <span style="color:${alive?'var(--amber)':'var(--red)'};font-weight:700">${$(dLdH[qi][j],6)}${alive?'':' ← gradient dead'}</span></span><br>`;
+    }
+    h+=`<br>`;
+  });
+  showMat('dL/dH',dLdH,'amber',6);
+  h+=`</div>`;
+
+  // dL/dW₁ = norm₂ᵀ @ dL/dH (since H = norm₂ · W₁)
+  const dLdW1=mm(T(norm2_b),dLdH);
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 5: dL/dW₁ = norm₂ᵀ · dL/dH (4×6)</span><br>`;
+  h+=`<span style="color:var(--dim)">Chain rule: H = norm₂·W₁ → dL/dW₁ = norm₂ᵀ · dL/dH</span><br><br>`;
+  const N2T=T(norm2_b);
+  dLdW1.forEach((r,ri)=>{
+    r.forEach((v,ci)=>{
+      const terms=N2T[ri].map((o,k)=>`${$(o)}×${$(dLdH[k][ci],6)}`).join(' + ');
+      h+=`<span style="padding-left:12px">[${ri},${ci}] = ${terms} = <span style="color:var(--amber);font-weight:700">${$(v,6)}</span></span><br>`;
+    });
+  });
+  h+=`<br>`;showMat('dL/dW₁',dLdW1,'amber',6);
+  h+=`</div>`;
+
+  // dL/dnorm₂ = dL/dH @ W₁ᵀ (since H = norm₂ · W₁)
+  const dLdnorm2=mm(dLdH,T(W1));
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 6: dL/dnorm₂ = dL/dH · W₁ᵀ (3×4)</span><br>`;
+  h+=`<span style="color:var(--dim)">Chain rule: norm₂ → H = norm₂·W₁ → dL/dnorm₂ = dL/dH · W₁ᵀ</span><br><br>`;
+  const W1T=T(W1);
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--amber)">dL/dnorm₂[${qt}]:</span><br>`;
+    for(let j=0;j<4;j++){
+      const terms=dLdH[qi].map((v,k)=>`${$(v,6)}×${$(W1T[k][j],1)}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--amber);font-weight:700">${$(dLdnorm2[qi][j],6)}</span></span><br>`;
+    }
+    h+=`<br>`;
+  });
+  showMat('dL/dnorm₂',dLdnorm2,'amber',6);
+  h+=`</div>`;
+
+  // dL/dresid₁ ≈ dL/dnorm₂ (simplified: skip RMSNorm Jacobian)
+  // dL/dO = dL/dresid₁ (since resid₁ = X + O, gradient passes through addition)
+  // But O = O_raw × W_O, so dL/dO_raw = dL/dO · W_Oᵀ
+  const dLdO_proj=dLdnorm2; // ⚠ SIMPLIFICATION: treating RMSNorm as identity for gradient purposes
+  // Full RMSNorm Jacobian: dL/dx_i = (1/RMS) · [dL/dy_i - x_i · Σ_j(x_j · dL/dy_j) / (n · RMS²)] · γ_i
+  // We skip this because γ=[1,1,1,1] and the Jacobian approaches identity for well-conditioned inputs
+  const dLdO_raw=mm(dLdO_proj,T(Wo_b));
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 6b: dL/dO_raw = dL/dnorm₂ · W_Oᵀ</span><br>`;
+  h+=`<span style="color:var(--dim)">⚠ Approximation: RMSNorm Jacobian treated as identity (valid when γ≈1, inputs well-conditioned).</span><br>`;
+  h+=`<span style="color:var(--dim)">Full derivation would require: dL/dx_i = (γ_i/RMS)·[dL/dy_i − x_i·Σⱼ(x_j·dL/dy_j)/(n·RMS²)]</span><br>`;
+  h+=`<span style="color:var(--dim)">Path: resid₁ = X + O_raw·W_O → dL/dO_raw = dL/dresid₁ · W_Oᵀ</span><br><br>`;
+  const WoT=T(Wo_b);
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--amber)">dL/dO_raw[${qt}]:</span><br>`;
+    for(let j=0;j<4;j++){
+      const terms=dLdO_proj[qi].map((v,k)=>`${$(v,6)}×${$(WoT[k][j],1)}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--amber);font-weight:700">${$(dLdO_raw[qi][j],6)}</span></span><br>`;
+    }
+    h+=`<br>`;
+  });
+  showMat('dL/dO_raw',dLdO_raw,'amber',6);
+  h+=`</div>`;
+
+  // dL/dA = dL/dO @ Vᵀ  (since O = AV)
+  const dLdA=mm(dLdO_raw,T(V));
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 7: dL/dA = dL/dO_raw · Vᵀ (3×3)</span><br>`;
+  h+=`<span style="color:var(--dim)">Chain rule: O_raw = AV → dL/dA = dL/dO_raw · Vᵀ</span><br><br>`;
+  const VT=T(V);
+  toks.forEach((qt,qi)=>{
+    toks.forEach((kt,ki)=>{
+      const terms=dLdO_raw[qi].map((v,d)=>`${$(v,6)}×${$(VT[d][ki])}`).join(' + ');
+      h+=`<span style="padding-left:12px">dL/dA[${qt},${kt}] = ${terms} = <span style="color:var(--amber);font-weight:700">${$(dLdA[qi][ki],6)}</span></span><br>`;
+    });
+  });
+  h+=`<br>`;showMat('dL/dA',dLdA,'amber',6);
+  h+=`</div>`;
+
+  // dL/dS: softmax Jacobian
+  const dLdS=A.map((a,i)=>{
+    const g=dLdA[i];
+    const s=a.reduce((sum,aj,j)=>sum+aj*g[j],0);
+    return a.map((aj,j)=>aj*(g[j]-s));
+  });
+
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 8: dL/dS — softmax Jacobian (hardest gradient!)</span><br>`;
+  h+=`<span style="color:var(--dim)">For each row i: dL/dS_i = A_i ⊙ (dL/dA_i − Σⱼ A_ij · dL/dA_ij)</span><br><br>`;
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--purple)">Row "${qt}":</span><br>`;
+    const a=A[qi], g=dLdA[qi];
+    const s=a.reduce((sum,aj,j)=>sum+aj*g[j],0);
+    // Show dot product
+    const dotTerms=a.map((aj,j)=>`${$(aj)}×${$(g[j],6)}`).join(' + ');
+    h+=`<span style="padding-left:20px">Σ(A·dL/dA) = ${dotTerms} = <span style="color:var(--dim)">${$(s,6)}</span></span><br>`;
+    toks.forEach((kt,ki)=>{
+      h+=`<span style="padding-left:20px">dL/dS[${qt},${kt}] = ${$(a[ki])} × (${$(g[ki],6)} − ${$(s,6)}) = <span style="color:var(--amber);font-weight:700">${$(dLdS[qi][ki],6)}</span></span><br>`;
+    });
+    h+=`<br>`;
+  });
+  showMat('dL/dS',dLdS,'amber',6);
+  h+=`</div>`;
+
+  // dL/dQ = (1/√d_k) · dL/dS @ K
+  const dLdQ_unscaled=mm(dLdS,K);
+  const dLdQ=dLdQ_unscaled.map(r=>r.map(v=>v/dk_b));
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--cyan);font-weight:700;font-size:14px">GRADIENT 9: dL/dQ = (1/√d_k) · dL/dS · K (3×4)</span><br>`;
+  h+=`<span style="color:var(--dim)">Chain rule: S = QKᵀ/√d_k → dL/dQ = (1/√d_k) · dL/dS · K</span><br><br>`;
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--cyan)">dL/dQ[${qt}]:</span><br>`;
+    for(let j=0;j<4;j++){
+      const terms=dLdS[qi].map((v,k)=>`${$(v,6)}×${$(K[k][j])}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--cyan);font-weight:700">${$(dLdQ[qi][j],6)}</span></span><br>`;
+    }
+    h+=`<br>`;
+  });
+  showMat('dL/dQ',dLdQ,'cyan',6);
+  h+=`</div>`;
+
+  // dL/dK = (1/√d_k) · dL/dSᵀ @ Q
+  const dLdK_unscaled=mm(T(dLdS),Q);
+  const dLdK=dLdK_unscaled.map(r=>r.map(v=>v/dk_b));
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 10: dL/dK = (1/√d_k) · dL/dSᵀ · Q (3×4)</span><br>`;
+  h+=`<span style="color:var(--dim)">Chain rule: S = QKᵀ/√d_k → dL/dK = (1/√d_k) · dL/dSᵀ · Q</span><br><br>`;
+  const dLdST=T(dLdS);
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--amber)">dL/dK[${qt}]:</span><br>`;
+    for(let j=0;j<4;j++){
+      const terms=dLdST[qi].map((v,k)=>`${$(v,6)}×${$(Q[k][j])}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--amber);font-weight:700">${$(dLdK[qi][j],6)}</span></span><br>`;
+    }
+    h+=`<br>`;
+  });
+  showMat('dL/dK',dLdK,'amber',6);
+  h+=`</div>`;
+
+  // dL/dV = Aᵀ @ dL/dO
+  const dLdV=mm(T(A),dLdO_raw);
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--green);font-weight:700;font-size:14px">GRADIENT 11: dL/dV = Aᵀ · dL/dO_raw (3×4)</span><br>`;
+  h+=`<span style="color:var(--dim)">Chain rule: O_raw = AV → dL/dV = Aᵀ · dL/dO_raw</span><br><br>`;
+  const AT=T(A);
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--green)">dL/dV[${qt}]:</span><br>`;
+    for(let j=0;j<4;j++){
+      const terms=AT[qi].map((v,k)=>`${$(v)}×${$(dLdO_raw[k][j],6)}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--green);font-weight:700">${$(dLdV[qi][j],6)}</span></span><br>`;
+    }
+    h+=`<br>`;
+  });
+  showMat('dL/dV',dLdV,'green',6);
+  h+=`</div>`;
+
+  // dL/dWq, dL/dWk, dL/dWv — use Xn (normed), since Q = Xn·Wq
+  const XnT=T(Xn);
+  const dLdWq=mm(XnT,dLdQ);
+  const dLdWk=mm(XnT,dLdK);
+  const dLdWv=mm(XnT,dLdV);
+
+  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
+  h+=`<span style="color:var(--pink);font-weight:700;font-size:14px">GRADIENT 12: dL/dW_q, dL/dW_k, dL/dW_v = norm₁ᵀ · dL/d(Q,K,V)</span><br>`;
+  h+=`<span style="color:var(--dim)">Since Q = norm₁·W_q → dL/dW_q = norm₁ᵀ · dL/dQ (and same for K, V)</span><br>`;
+  h+=`<span style="color:var(--dim)">⚠ Same RMSNorm approximation: gradient through first RMSNorm treated as identity</span><br><br>`;
+
+  [['dL/dW_q','cyan',dLdWq,dLdQ],['dL/dW_k','amber',dLdWk,dLdK],['dL/dW_v','green',dLdWv,dLdV]].forEach(([name,col,dW,dG])=>{
+    h+=`<span style="color:var(--${col});font-weight:700">${name} = norm₁ᵀ · ${name.replace('W_','d')}:</span><br>`;
+    dW.forEach((r,ri)=>{
+      r.forEach((v,ci)=>{
+        const terms=XnT[ri].map((x,k)=>`${$(x)}×${$(dG[k][ci],6)}`).join(' + ');
+        h+=`<span style="padding-left:12px">[${ri},${ci}] = ${terms} = <span style="color:var(--${col});font-weight:700">${$(v,6)}</span></span><br>`;
+      });
+    });
+    h+=`<br>`;showMat(name,dW,col,6);h+=`<br>`;
+  });
+  h+=`</div>`;
+
+  // Summary
+  h+=`<div style="background:rgba(134,239,172,.06);border:1px solid rgba(134,239,172,.2);border-radius:8px;padding:14px 16px;margin-top:14px">`;
+  h+=`<div style="font:700 13px var(--mono);color:var(--green);margin-bottom:10px">GRADIENT UPDATE — one training step</div>`;
+  h+=`<div style="font:12px var(--mono);color:var(--text2);line-height:2">`;
+  h+=`<span style="color:var(--dim)">With learning rate α = 0.01:</span><br>`;
+  h+=`<span style="padding-left:12px">W₁_new = W₁ − α · dL/dW₁ &nbsp;(4×6 matrix, 24 parameters updated)</span><br>`;
+  h+=`<span style="padding-left:12px">W₂_new = W₂ − α · dL/dW₂ &nbsp;(6×4 matrix, 24 parameters updated)</span><br>`;
+  h+=`<span style="padding-left:12px">W_q_new = W_q − α · dL/dW_q &nbsp;(4×4 matrix, 16 parameters updated)</span><br>`;
+  h+=`<span style="padding-left:12px">W_k_new = W_k − α · dL/dW_k &nbsp;(4×4 matrix, 16 parameters updated)</span><br>`;
+  h+=`<span style="padding-left:12px">W_v_new = W_v − α · dL/dW_v &nbsp;(4×4 matrix, 16 parameters updated)</span><br><br>`;
+  h+=`<span style="color:var(--green);font-weight:700">Total: 96 parameters × 1 gradient each = 96 multiplications per training step</span><br>`;
+  h+=`<span style="color:var(--dim)">In LLaMA 70B: 70 billion parameters, each updated every step. Same chain rule, just bigger matrices.</span>`;
+  h+=`</div></div>`;
+
+  h+=`</div>`; // end backward
+
+  h+=`</div>`; // end main
+  el.innerHTML=h;
+}
+
+renderAttn();renderMHA();renderInput();renderStack();renderOutput();renderBackward();
+</script>
+<div style="text-align:center;padding:24px 20px 32px;border-top:1px solid rgba(255,255,255,.06);margin-top:40px;font-family:monospace;font-size:10px;color:rgba(255,255,255,.25);letter-spacing:.5px">© 2025–2026 Sam Pooni · CS²B Research · <a href="https://sampooni.github.io/cssquaredb" style="color:rgba(94,234,212,.4);text-decoration:none">sampooni.github.io/cssquaredb</a> · All rights reserved</div>
+</body>
+</html>

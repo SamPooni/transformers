@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Activation Function Geometry — ReLU vs Leaky ReLU vs GELU vs SiLU</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #06070b;
+    --surface: #0c0e16;
+    --border: #1a1d2e;
+    --text: #c8cad0;
+    --text-dim: #6b6f80;
+    --relu: #ff4444;
+    --leaky: #ff8c00;
+    --gelu: #22cc88;
+    --silu: #4a9eff;
+    --grid: #141628;
+    --axis: #2a2d42;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; padding: 30px 20px; }
+  .container { max-width: 1200px; margin: 0 auto; }
+  h1 { text-align: center; font-size: 1.5rem; font-weight: 700; color: #fff; margin-bottom: 4px; letter-spacing: -0.5px; }
+  .subtitle { text-align: center; color: var(--text-dim); font-size: 0.82rem; margin-bottom: 24px; }
+  
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+  
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .card h2 { font-size: 0.95rem; font-weight: 600; margin-bottom: 2px; font-family: 'JetBrains Mono', monospace; }
+  .card .formula { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-dim); margin-bottom: 12px; }
+  
+  canvas { width: 100%; border-radius: 8px; background: var(--bg); }
+  
+  .overlay-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  @media (max-width: 800px) { .overlay-row { grid-template-columns: 1fr; } }
+  
+  .legend { display: flex; justify-content: center; gap: 24px; flex-wrap: wrap; margin: 16px 0; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--text-dim); }
+  .legend-dot { width: 12px; height: 3px; border-radius: 2px; }
+  
+  .insight-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 16px; }
+  @media (max-width: 800px) { .insight-grid { grid-template-columns: 1fr 1fr; } }
+  .insight { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .insight h3 { font-size: 0.82rem; font-weight: 600; margin-bottom: 6px; font-family: 'JetBrains Mono', monospace; }
+  .insight p { font-size: 0.75rem; color: var(--text-dim); line-height: 1.5; }
+  .insight .tag { display: inline-block; font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; margin-top: 6px; font-weight: 600; }
+  
+  .near-zero { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-top: 16px; }
+  .near-zero h2 { font-size: 0.95rem; font-weight: 600; margin-bottom: 4px; color: #fff; }
+  .near-zero .desc { font-size: 0.78rem; color: var(--text-dim); margin-bottom: 12px; }
+  
+  .table-wrap { overflow-x: auto; margin-top: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.78rem; font-family: 'JetBrains Mono', monospace; }
+  th { padding: 8px 10px; text-align: left; color: var(--text-dim); border-bottom: 1px solid var(--border); font-weight: 500; }
+  td { padding: 7px 10px; border-bottom: 1px solid #0e1018; }
+  .dead { color: #ff4444; font-weight: 600; }
+  .weak { color: #ff8c00; }
+  .good { color: #22cc88; }
+  .best { color: #4a9eff; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Activation Function Geometry</h1>
+  <p class="subtitle">ReLU → Leaky ReLU → GELU → SiLU/Swish — why smooth curves replaced hard corners</p>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--relu)"></div>ReLU</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--leaky)"></div>Leaky ReLU (α=0.01)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--gelu)"></div>GELU</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--silu)"></div>SiLU / Swish</div>
+  </div>
+
+  <!-- Individual function plots -->
+  <div class="grid">
+    <div class="card">
+      <h2 style="color:var(--relu)">ReLU</h2>
+      <div class="formula">f(x) = max(0, x)</div>
+      <canvas id="c-relu" height="250"></canvas>
+    </div>
+    <div class="card">
+      <h2 style="color:var(--leaky)">Leaky ReLU</h2>
+      <div class="formula">f(x) = x if x > 0, else 0.01x</div>
+      <canvas id="c-leaky" height="250"></canvas>
+    </div>
+    <div class="card">
+      <h2 style="color:var(--gelu)">GELU</h2>
+      <div class="formula">f(x) ≈ 0.5x(1 + tanh(√(2/π)(x + 0.044715x³)))  — tanh approx</div>
+      <canvas id="c-gelu" height="250"></canvas>
+    </div>
+    <div class="card">
+      <h2 style="color:var(--silu)">SiLU / Swish</h2>
+      <div class="formula">f(x) = x · σ(x)  — self-gated sigmoid</div>
+      <canvas id="c-silu" height="250"></canvas>
+    </div>
+  </div>
+
+  <!-- Overlay comparisons -->
+  <div class="overlay-row">
+    <div class="card">
+      <h2 style="color:#fff">All Four — f(x) Overlay</h2>
+      <div class="formula">Function values: where they diverge matters</div>
+      <canvas id="c-overlay" height="280"></canvas>
+    </div>
+    <div class="card">
+      <h2 style="color:#fff">All Four — f'(x) Derivatives</h2>
+      <div class="formula">Gradient flow: what backpropagation actually sees. At x=0, ReLU/Leaky ReLU f'(x) is undefined (kink); plotted using left-derivative convention.</div>
+      <canvas id="c-deriv" height="280"></canvas>
+    </div>
+  </div>
+
+  <!-- Near-zero zoom -->
+  <div class="near-zero">
+    <h2>🔬 Critical Near-Zero Region (x ∈ [-1, 1])</h2>
+    <p class="desc">This is where feature discrimination happens. Your worked example had H[2] = -0.0111 — right in this zone.</p>
+    <div class="overlay-row" style="margin-top:12px">
+      <canvas id="c-zoom" height="280"></canvas>
+      <canvas id="c-zoom-deriv" height="280"></canvas>
+    </div>
+  </div>
+
+  <!-- Numerical comparison table -->
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>x</th>
+          <th style="color:var(--relu)">ReLU f(x)</th>
+          <th style="color:var(--relu)">ReLU f'(x)</th>
+          <th style="color:var(--leaky)">Leaky f(x)</th>
+          <th style="color:var(--leaky)">Leaky f'(x)</th>
+          <th style="color:var(--gelu)">GELU f(x)</th>
+          <th style="color:var(--gelu)">GELU f'(x)</th>
+          <th style="color:var(--silu)">SiLU f(x)</th>
+          <th style="color:var(--silu)">SiLU f'(x)</th>
+        </tr>
+      </thead>
+      <tbody id="num-table"></tbody>
+    </table>
+  </div>
+
+  <!-- Insight cards -->
+  <div class="insight-grid">
+    <div class="insight">
+      <h3 style="color:var(--relu)">ReLU</h3>
+      <p>Hard zero for all negative inputs. Gradient is exactly 0 or 1 — no in-between. Sharp corner at origin creates non-smooth loss landscape. Dead neurons often persist without careful init/normalization.</p>
+      <div class="tag" style="background:#ff444422; color:var(--relu)">Largely replaced in modern LLM FFNs</div>
+    </div>
+    <div class="insight">
+      <h3 style="color:var(--leaky)">Leaky ReLU</h3>
+      <p>Fixes dead neurons with 0.01 slope. But gradient is still piecewise constant (0.01 or 1). Sharp corner remains. Near-zero signal is ~100× attenuated — strongly attenuated but not zero.</p>
+      <div class="tag" style="background:#ff8c0022; color:var(--leaky)">USED in GANs/vision</div>
+    </div>
+    <div class="insight">
+      <h3 style="color:var(--gelu)">GELU</h3>
+      <p>Smooth probabilistic gate. Gradient is continuous everywhere — no corners. Preserves meaningful signal near zero. Slightly non-monotonic (small negative dip). Standard for BERT/GPT.</p>
+      <div class="tag" style="background:#22cc8822; color:var(--gelu)">GPT-2/3, BERT</div>
+    </div>
+    <div class="insight">
+      <h3 style="color:var(--silu)">SiLU / Swish</h3>
+      <p>Self-gated: x modulates itself via sigmoid. Smooth, non-monotonic, unbounded above. Gradient never zero for finite x. Modern LLM FFNs use gated variants (SwiGLU/GeGLU); SiLU here represents the gating nonlinearity in SwiGLU(x) = SiLU(xW_gate) ⊙ xW_up.</p>
+      <div class="tag" style="background:#4a9eff22; color:var(--silu)">LLaMA, Mistral, PaLM</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// Activation functions
+const sigmoid = x => 1 / (1 + Math.exp(-x));
+const relu = x => Math.max(0, x);
+const leaky = x => x > 0 ? x : 0.01 * x;
+const gelu = x => {
+  // Approximation: 0.5x(1 + tanh(sqrt(2/π)(x + 0.044715x³)))
+  const c = Math.sqrt(2 / Math.PI);
+  return 0.5 * x * (1 + Math.tanh(c * (x + 0.044715 * x * x * x)));
+};
+const silu = x => x * sigmoid(x);
+
+// Derivatives (analytical)
+const relu_d = x => x > 0 ? 1 : 0;
+const leaky_d = x => x > 0 ? 1 : 0.01;
+const gelu_d = x => {
+  const c = Math.sqrt(2 / Math.PI);
+  const inner = c * (x + 0.044715 * x * x * x);
+  const t = Math.tanh(inner);
+  const sech2 = 1 - t * t;
+  const dinner = c * (1 + 3 * 0.044715 * x * x);
+  return 0.5 * (1 + t) + 0.5 * x * sech2 * dinner;
+};
+const silu_d = x => {
+  const s = sigmoid(x);
+  return s + x * s * (1 - s);
+};
+
+const funcs = [
+  { fn: relu, df: relu_d, color: '#ff4444', name: 'ReLU' },
+  { fn: leaky, df: leaky_d, color: '#ff8c00', name: 'Leaky ReLU' },
+  { fn: gelu, df: gelu_d, color: '#22cc88', name: 'GELU' },
+  { fn: silu, df: silu_d, color: '#4a9eff', name: 'SiLU' }
+];
+
+function drawPlot(canvasId, plotFuncs, xMin, xMax, yMin, yMax, opts = {}) {
+  const canvas = document.getElementById(canvasId);
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+  const pad = { l: 44, r: 16, t: 12, b: 28 };
+  const pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
+
+  const toX = v => pad.l + (v - xMin) / (xMax - xMin) * pw;
+  const toY = v => pad.t + (1 - (v - yMin) / (yMax - yMin)) * ph;
+
+  // Grid
+  ctx.strokeStyle = '#141628';
+  ctx.lineWidth = 0.5;
+  for (let gx = Math.ceil(xMin); gx <= xMax; gx++) {
+    ctx.beginPath(); ctx.moveTo(toX(gx), pad.t); ctx.lineTo(toX(gx), pad.t + ph); ctx.stroke();
+  }
+  for (let gy = Math.ceil(yMin); gy <= yMax; gy++) {
+    ctx.beginPath(); ctx.moveTo(pad.l, toY(gy)); ctx.lineTo(pad.l + pw, toY(gy)); ctx.stroke();
+  }
+
+  // Axes
+  ctx.strokeStyle = '#2a2d42';
+  ctx.lineWidth = 1;
+  if (yMin <= 0 && yMax >= 0) {
+    const y0 = toY(0);
+    ctx.beginPath(); ctx.moveTo(pad.l, y0); ctx.lineTo(pad.l + pw, y0); ctx.stroke();
+  }
+  if (xMin <= 0 && xMax >= 0) {
+    const x0 = toX(0);
+    ctx.beginPath(); ctx.moveTo(x0, pad.t); ctx.lineTo(x0, pad.t + ph); ctx.stroke();
+  }
+
+  // Axis labels
+  ctx.fillStyle = '#4a4d60';
+  ctx.font = '10px JetBrains Mono';
+  ctx.textAlign = 'center';
+  for (let gx = Math.ceil(xMin); gx <= xMax; gx++) {
+    ctx.fillText(gx, toX(gx), pad.t + ph + 16);
+  }
+  ctx.textAlign = 'right';
+  for (let gy = Math.ceil(yMin); gy <= yMax; gy++) {
+    ctx.fillText(gy, pad.l - 6, toY(gy) + 3);
+  }
+
+  // Plot functions
+  const steps = 500;
+  for (const { fn, color, lineWidth: lw, dash } of plotFuncs) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lw || 2;
+    if (dash) ctx.setLineDash(dash);
+    else ctx.setLineDash([]);
+    ctx.beginPath();
+    let started = false;
+    for (let i = 0; i <= steps; i++) {
+      const xv = xMin + (xMax - xMin) * i / steps;
+      const yv = fn(xv);
+      if (yv < yMin - 1 || yv > yMax + 1) { started = false; continue; }
+      const px = toX(xv), py = toY(yv);
+      if (!started) { ctx.moveTo(px, py); started = true; }
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Special markers
+  if (opts.showCorner) {
+    // Mark the corner/cusp at origin
+    ctx.fillStyle = opts.cornerColor || '#ff4444';
+    ctx.beginPath();
+    ctx.arc(toX(0), toY(0), 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = opts.cornerColor || '#ff4444';
+    ctx.font = '9px DM Sans';
+    ctx.textAlign = 'left';
+    ctx.fillText(opts.cornerLabel || 'corner', toX(0) + 8, toY(0) - 6);
+  }
+
+  if (opts.showH2) {
+    // Mark H[2] = -0.0111 from the worked example
+    const xv = -0.0111;
+    for (const { fn, color } of plotFuncs) {
+      const yv = fn(xv);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(toX(xv), toY(yv), 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = '#ffffff33';
+    ctx.lineWidth = 0.5;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(toX(xv), pad.t);
+    ctx.lineTo(toX(xv), pad.t + ph);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#fff';
+    ctx.font = '9px JetBrains Mono';
+    ctx.textAlign = 'left';
+    ctx.fillText('x = -0.011', toX(xv) + 4, pad.t + 14);
+    ctx.fillStyle = '#6b6f80';
+    ctx.fillText('(your H[2])', toX(xv) + 4, pad.t + 26);
+  }
+}
+
+// Individual plots
+function drawAll() {
+  // ReLU
+  drawPlot('c-relu', [
+    { fn: relu, color: '#ff4444' },
+    { fn: relu_d, color: '#ff444466', lineWidth: 1, dash: [4, 3] }
+  ], -4, 4, -1, 4, { showCorner: true, cornerColor: '#ff4444', cornerLabel: '← non-differentiable corner' });
+
+  // Leaky ReLU
+  drawPlot('c-leaky', [
+    { fn: leaky, color: '#ff8c00' },
+    { fn: leaky_d, color: '#ff8c0066', lineWidth: 1, dash: [4, 3] }
+  ], -4, 4, -1, 4, { showCorner: true, cornerColor: '#ff8c00', cornerLabel: '← still a corner' });
+
+  // GELU
+  drawPlot('c-gelu', [
+    { fn: gelu, color: '#22cc88' },
+    { fn: gelu_d, color: '#22cc8866', lineWidth: 1, dash: [4, 3] }
+  ], -4, 4, -1, 4, { showCorner: false });
+
+  // SiLU
+  drawPlot('c-silu', [
+    { fn: silu, color: '#4a9eff' },
+    { fn: silu_d, color: '#4a9eff66', lineWidth: 1, dash: [4, 3] }
+  ], -4, 4, -1, 4, { showCorner: false });
+
+  // Overlay all f(x)
+  drawPlot('c-overlay', funcs.map(f => ({ fn: f.fn, color: f.color })), -4, 4, -1.5, 4);
+
+  // Overlay all f'(x) derivatives
+  drawPlot('c-deriv', funcs.map(f => ({ fn: f.df, color: f.color })), -4, 4, -0.5, 1.5);
+
+  // Near-zero zoom f(x)
+  drawPlot('c-zoom', funcs.map(f => ({ fn: f.fn, color: f.color })), -1, 1, -0.3, 0.8, { showH2: true });
+
+  // Near-zero zoom f'(x)
+  drawPlot('c-zoom-deriv', funcs.map(f => ({ fn: f.df, color: f.color })), -1, 1, -0.2, 1.2, { showH2: true });
+}
+
+// Numerical table
+function buildTable() {
+  const tbody = document.getElementById('num-table');
+  const testX = [-3, -2, -1, -0.5, -0.0111, 0, 0.0111, 0.5, 1, 2, 3];
+  
+  for (const x of testX) {
+    const row = document.createElement('tr');
+    const isWorked = Math.abs(x - (-0.0111)) < 0.001;
+    if (isWorked) row.style.background = '#1a1d2e';
+    
+    const xLabel = isWorked ? '-0.0111 ★' : x.toString();
+    row.innerHTML = `<td style="color:#fff;font-weight:600">${xLabel}</td>`;
+    
+    for (const f of funcs) {
+      const fv = f.fn(x);
+      const dv = f.df(x);
+      const fClass = Math.abs(fv) < 0.0001 ? 'dead' : (Math.abs(fv) < 0.01 ? 'weak' : '');
+      const dClass = Math.abs(dv) < 0.02 ? 'dead' : (Math.abs(dv) < 0.1 ? 'weak' : '');
+      row.innerHTML += `<td class="${fClass}">${fv.toFixed(4)}</td><td class="${dClass}">${dv.toFixed(4)}</td>`;
+    }
+    tbody.appendChild(row);
+  }
+}
+
+drawAll();
+buildTable();
+window.addEventListener('resize', drawAll);
+</script>
+<div style="text-align:center;padding:24px 20px 32px;border-top:1px solid rgba(255,255,255,.06);margin-top:40px;font-family:monospace;font-size:10px;color:rgba(255,255,255,.25);letter-spacing:.5px">© 2025–2026 Sam Pooni · CS²B Research · <a href="https://sampooni.github.io/cssquaredb" style="color:rgba(94,234,212,.4);text-decoration:none">sampooni.github.io/cssquaredb</a> · All rights reserved</div>
+</body>
+</html>
