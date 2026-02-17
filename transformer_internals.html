@@ -212,7 +212,12 @@ function go(id){
 const tokens=['The','cat','sat'];
 const emb=[[.9,.1,.3,.2],[.2,.8,.6,.1],[.1,.3,.9,.7]];
 function dot(a,b){return a.reduce((s,v,i)=>s+v*b[i],0)}
-function softmax(arr){const m=Math.max(...arr),e=arr.map(v=>Math.exp(v-m)),s=e.reduce((a,b)=>a+b);return e.map(v=>v/s)}
+function softmax(arr){const m=Math.max(...arr.filter(v=>v!==-Infinity)),e=arr.map(v=>v===-Infinity?0:Math.exp(v-m)),s=e.reduce((a,b)=>a+b);return e.map(v=>v/s)}
+// RoPE: rotate consecutive dim pairs by position-dependent angle
+// θ_i = pos / 10000^(2i/d), then [a,b] → [a·cos(θ)-b·sin(θ), a·sin(θ)+b·cos(θ)]
+function rope(vec,pos){const d=vec.length,out=new Array(d);for(let i=0;i<d;i+=2){const th=pos/Math.pow(10000,i/d),c=Math.cos(th),s=Math.sin(th);out[i]=vec[i]*c-vec[i+1]*s;out[i+1]=vec[i]*s+vec[i+1]*c}return out}
+// RoPE inverse: rotate by -θ (transpose of rotation matrix = its inverse)
+function rope_inv(vec,pos){const d=vec.length,out=new Array(d);for(let i=0;i<d;i+=2){const th=pos/Math.pow(10000,i/d),c=Math.cos(th),s=Math.sin(th);out[i]=vec[i]*c+vec[i+1]*s;out[i+1]=-vec[i]*s+vec[i+1]*c}return out}
 // Solid heatmap colors for dark bg
 function hc(v,type){
   if(type==='q')return`hsl(170,${50+v*30}%,${25+v*35}%)`;
@@ -338,6 +343,10 @@ function renderAttn(){
   const allK_a=tokens.map((_,i)=>mm_a(normed[i],Wk_a));
   const allV_a=tokens.map((_,i)=>mm_a(normed[i],Wv_a));
 
+  // RoPE: rotate Q and K by position before dot product
+  const allQ_r=allQ_a.map((q,pos)=>rope(q,pos));
+  const allK_r=allK_a.map((k,pos)=>rope(k,pos));
+
   h+=`<div style="background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin:10px 0">`;
   h+=`<div style="font:700 12px var(--mono);color:var(--cyan);margin-bottom:10px">STEP 1 — PROJECT INTO Q, K, V (norm₁ × learned weight matrices)</div>`;
   h+=`<div style="font:12px var(--mono);color:var(--text2);line-height:2.1">`;
@@ -383,10 +392,40 @@ function renderAttn(){
     h+=`<span style="padding-left:8px">V_${t} = <span style="color:var(--green);font-weight:700">[${allV_a[ti].map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
   });
 
-  // Summary table
-  h+=`<span style="color:var(--dim)">Summary — all projected vectors:</span><br>`;
+  // Summary table (pre-RoPE)
+  h+=`<span style="color:var(--dim)">Summary — projected vectors (before RoPE):</span><br>`;
   tokens.forEach((t,i)=>{
     h+=`<span style="padding-left:8px">${t}: Q=[<span style="color:var(--cyan)">${allQ_a[i].map(v=>v.toFixed(3)).join(', ')}</span>] K=[<span style="color:var(--amber)">${allK_a[i].map(v=>v.toFixed(3)).join(', ')}</span>] V=[<span style="color:var(--green)">${allV_a[i].map(v=>v.toFixed(3)).join(', ')}</span>]</span><br>`;
+  });
+  h+=`</div></div>`;
+
+  // ── STEP 1.5: RoPE rotation on Q and K ──
+  h+=`<div style="background:var(--card2);border:1px solid rgba(253,186,116,.2);border-radius:10px;padding:16px 20px;margin:10px 0">`;
+  h+=`<div style="font:700 12px var(--mono);color:var(--orange);margin-bottom:10px">STEP 1.5 — RoPE (Rotary Position Embeddings) on Q and K</div>`;
+  h+=`<div style="font:12px var(--mono);color:var(--text2);line-height:2.1">`;
+  h+=`<span style="color:var(--dim)">Position information injected by rotating consecutive dimension pairs:</span><br>`;
+  h+=`<span style="padding-left:8px;color:var(--orange)">θ_i = pos / 10000^(2i / d_k)</span>  <span style="color:var(--dim)">d_k = 4 → pairs [0,1] and [2,3]</span><br>`;
+  h+=`<span style="padding-left:8px;color:var(--orange)">[a, b] → [a·cos(θ) − b·sin(θ),  a·sin(θ) + b·cos(θ)]</span><br>`;
+  h+=`<span style="padding-left:8px;color:var(--dim)">V is NOT rotated — only Q and K get position encoding</span><br><br>`;
+
+  tokens.forEach((t,ti)=>{
+    h+=`<span style="padding-left:8px;color:var(--orange);font-weight:700">Position ${ti} ("${t}"):</span><br>`;
+    for(let p=0;p<2;p++){
+      const dim0=p*2, dim1=p*2+1;
+      const th=ti/Math.pow(10000,dim0/4);
+      const c=Math.cos(th), s=Math.sin(th);
+      h+=`<span style="padding-left:16px;color:var(--dim)">pair [${dim0},${dim1}]: θ = ${ti} / 10000^(${dim0}/4) = ${th.toFixed(4)}  cos=${c.toFixed(4)}  sin=${s.toFixed(4)}</span><br>`;
+    }
+    // Show Q rotation
+    h+=`<span style="padding-left:16px;color:var(--cyan)">Q_${t}: [${allQ_a[ti].map(v=>v.toFixed(4)).join(', ')}] → <span style="font-weight:700">[${allQ_r[ti].map(v=>v.toFixed(4)).join(', ')}]</span></span><br>`;
+    h+=`<span style="padding-left:16px;color:var(--amber)">K_${t}: [${allK_a[ti].map(v=>v.toFixed(4)).join(', ')}] → <span style="font-weight:700">[${allK_r[ti].map(v=>v.toFixed(4)).join(', ')}]</span></span><br>`;
+    if(ti===0) h+=`<span style="padding-left:16px;color:var(--dim)">(pos 0: θ=0, cos=1, sin=0 → no rotation, vectors unchanged)</span><br>`;
+    h+=`<br>`;
+  });
+
+  h+=`<span style="color:var(--dim)">Summary — after RoPE (these go into the dot product):</span><br>`;
+  tokens.forEach((t,i)=>{
+    h+=`<span style="padding-left:8px">${t}: Q_r=[<span style="color:var(--cyan)">${allQ_r[i].map(v=>v.toFixed(3)).join(', ')}</span>] K_r=[<span style="color:var(--amber)">${allK_r[i].map(v=>v.toFixed(3)).join(', ')}</span>]</span><br>`;
   });
   h+=`</div></div>`;
 
@@ -408,15 +447,15 @@ function renderAttn(){
     h+=`<div style="${border};border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
     h+=`<span style="color:var(--cyan);font-weight:700;font-size:14px">QUERY: "${qt}"${isActive?' ◀ selected':''}</span><br><br>`;
 
-    // Dot products: Q_qt · K_each, then scale by √d_k
-    const qi_scores_raw=tokens.map((_,j)=>dot_a(allQ_a[qi_t],allK_a[j]));
+    // Dot products: Q_r · K_r (RoPE-rotated), then scale by √d_k
+    const qi_scores_raw=tokens.map((_,j)=>dot_a(allQ_r[qi_t],allK_r[j]));
     const qi_scores=qi_scores_raw.map(s=>s/dk_single);
 
-    h+=`<span style="color:var(--orange);font-weight:700">① SCALED DOT PRODUCT — (Q_${qt} · K_each) / √d_k:</span><br>`;
-    h+=`<span style="padding-left:12px;color:var(--dim)">d_k = 4 (full head dimension), √d_k = ${dk_single.toFixed(1)}</span><br>`;
+    h+=`<span style="color:var(--orange);font-weight:700">① SCALED DOT PRODUCT — (Q_r · K_r) / √d_k &nbsp;<span style="color:var(--dim);font-weight:500">(using RoPE-rotated vectors)</span></span><br>`;
+    h+=`<span style="padding-left:12px;color:var(--dim)">d_k = 4, √d_k = ${dk_single.toFixed(1)}. Q_r and K_r carry position information from RoPE rotation.</span><br>`;
     tokens.forEach((kt,j)=>{
-      const terms=allQ_a[qi_t].map((v,d)=>`${v.toFixed(3)}×${allK_a[j][d].toFixed(3)}`).join(' + ');
-      h+=`<span style="padding-left:12px">Q_${qt} · K_${kt} = ${terms} = ${qi_scores_raw[j].toFixed(4)} / ${dk_single.toFixed(1)} = <span style="color:var(--amber);font-weight:700">${qi_scores[j].toFixed(4)}</span></span><br>`;
+      const terms=allQ_r[qi_t].map((v,d)=>`${v.toFixed(3)}×${allK_r[j][d].toFixed(3)}`).join(' + ');
+      h+=`<span style="padding-left:12px">Q_r_${qt} · K_r_${kt} = ${terms} = ${qi_scores_raw[j].toFixed(4)} / ${dk_single.toFixed(1)} = <span style="color:var(--amber);font-weight:700">${qi_scores[j].toFixed(4)}</span></span><br>`;
     });
     h+=`<br>`;
 
@@ -486,7 +525,7 @@ function renderAttn(){
   h+=`<h4>FINAL OUTPUTS — all 3 tokens after attention + W_O</h4>`;
   h+=`<div style="font:12.5px var(--mono);color:var(--text2);line-height:2.2;margin-top:8px">`;
   tokens.forEach((qt,qi_t)=>{
-    const sc_t_raw=tokens.map((_,j)=>dot_a(allQ_a[qi_t],allK_a[j]));
+    const sc_t_raw=tokens.map((_,j)=>dot_a(allQ_r[qi_t],allK_r[j]));
     const sc_t=sc_t_raw.map(s=>s/dk_single);
     const sc_t_masked=sc_t.map((s,j)=>j<=qi_t?s:-Infinity);
     const wt_t=softmax(sc_t_masked);
@@ -512,7 +551,7 @@ function renderAttn(){
 
   // Show residual for the selected token
   const qi_sel=qi;
-  const sc_sel_raw=tokens.map((_,j)=>dot_a(allQ_a[qi_sel],allK_a[j]));
+  const sc_sel_raw=tokens.map((_,j)=>dot_a(allQ_r[qi_sel],allK_r[j]));
   const sc_sel=sc_sel_raw.map(s=>s/dk_single);
   const sc_sel_masked=sc_sel.map((s,j)=>j<=qi_sel?s:-Infinity);
   const wt_sel=softmax(sc_sel_masked);
@@ -660,16 +699,29 @@ function renderMHA(){
     h+=`<span style="padding-left:12px">V_${t} = <span style="color:var(--green);font-weight:700">[${allV[ti].map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
   });
 
-  // SPLIT into heads for every token
-  h+=`<span style="color:var(--pink);font-weight:700">⑥ SPLIT INTO 2 HEADS — for every token</span><br>`;
+  // RoPE: rotate Q and K by position (applied to full 4D vector before head split)
+  const allQ_roped=allQ.map((q,pos)=>rope(q,pos));
+  const allK_roped=allK.map((k,pos)=>rope(k,pos));
+
+  h+=`<span style="color:var(--orange);font-weight:700">⑤½ RoPE — rotate Q and K by position (before head split)</span><br>`;
+  h+=`<span style="padding-left:12px;color:var(--dim)">Same rotation as Diagram 1. V is NOT rotated.</span><br><br>`;
+  toks.forEach((t,ti)=>{
+    h+=`<span style="padding-left:12px;color:var(--orange)">"${t}" (pos ${ti}):</span><br>`;
+    h+=`<span style="padding-left:20px;color:var(--cyan)">Q: [${allQ[ti].map(v=>v.toFixed(4)).join(', ')}] → [${allQ_roped[ti].map(v=>v.toFixed(4)).join(', ')}]</span><br>`;
+    h+=`<span style="padding-left:20px;color:var(--amber)">K: [${allK[ti].map(v=>v.toFixed(4)).join(', ')}] → [${allK_roped[ti].map(v=>v.toFixed(4)).join(', ')}]</span><br>`;
+  });
+  h+=`<br>`;
+
+  // SPLIT into heads for every token (using RoPE'd Q/K)
+  h+=`<span style="color:var(--pink);font-weight:700">⑥ SPLIT INTO 2 HEADS — for every token (from RoPE'd vectors)</span><br>`;
   h+=`<span style="padding-left:12px;color:var(--dim)">dims [0,1] → Head 1, dims [2,3] → Head 2</span><br><br>`;
   h+=`<span style="padding-left:12px;color:var(--pink)">Head 1 (d_k = 2):</span><br>`;
   toks.forEach((t,i)=>{
-    h+=`<span style="padding-left:20px">${t}: Q₁=[<span style="color:var(--cyan)">${allQ[i][0].toFixed(3)}, ${allQ[i][1].toFixed(3)}</span>]  K₁=[<span style="color:var(--amber)">${allK[i][0].toFixed(3)}, ${allK[i][1].toFixed(3)}</span>]  V₁=[<span style="color:var(--green)">${allV[i][0].toFixed(3)}, ${allV[i][1].toFixed(3)}</span>]</span><br>`;
+    h+=`<span style="padding-left:20px">${t}: Q₁=[<span style="color:var(--cyan)">${allQ_roped[i][0].toFixed(3)}, ${allQ_roped[i][1].toFixed(3)}</span>]  K₁=[<span style="color:var(--amber)">${allK_roped[i][0].toFixed(3)}, ${allK_roped[i][1].toFixed(3)}</span>]  V₁=[<span style="color:var(--green)">${allV[i][0].toFixed(3)}, ${allV[i][1].toFixed(3)}</span>]</span><br>`;
   });
   h+=`<br><span style="padding-left:12px;color:var(--pink)">Head 2 (d_k = 2):</span><br>`;
   toks.forEach((t,i)=>{
-    h+=`<span style="padding-left:20px">${t}: Q₂=[<span style="color:var(--cyan)">${allQ[i][2].toFixed(3)}, ${allQ[i][3].toFixed(3)}</span>]  K₂=[<span style="color:var(--amber)">${allK[i][2].toFixed(3)}, ${allK[i][3].toFixed(3)}</span>]  V₂=[<span style="color:var(--green)">${allV[i][2].toFixed(3)}, ${allV[i][3].toFixed(3)}</span>]</span><br>`;
+    h+=`<span style="padding-left:20px">${t}: Q₂=[<span style="color:var(--cyan)">${allQ_roped[i][2].toFixed(3)}, ${allQ_roped[i][3].toFixed(3)}</span>]  K₂=[<span style="color:var(--amber)">${allK_roped[i][2].toFixed(3)}, ${allK_roped[i][3].toFixed(3)}</span>]  V₂=[<span style="color:var(--green)">${allV[i][2].toFixed(3)}, ${allV[i][3].toFixed(3)}</span>]</span><br>`;
   });
   h+=`<br>`;
 
@@ -685,10 +737,10 @@ function renderMHA(){
 
   toks.forEach((qt,qi)=>{
     h+=`<span style="padding-left:12px;color:var(--purple)">Query: "${qt}" — dot product with every key, then ÷ √2:</span><br>`;
-    const q=[allQ[qi][0],allQ[qi][1]];
+    const q=[allQ_roped[qi][0],allQ_roped[qi][1]];
     const scores=[];
     toks.forEach((kt,ki)=>{
-      const k=[allK[ki][0],allK[ki][1]];
+      const k=[allK_roped[ki][0],allK_roped[ki][1]];
       const d=q[0]*k[0]+q[1]*k[1];
       const scaled=d/dk;
       scores.push(scaled);
@@ -742,10 +794,10 @@ function renderMHA(){
 
   toks.forEach((qt,qi)=>{
     h+=`<span style="padding-left:12px;color:var(--purple)">Query: "${qt}":</span><br>`;
-    const q=[allQ[qi][2],allQ[qi][3]];
+    const q=[allQ_roped[qi][2],allQ_roped[qi][3]];
     const scores=[];
     toks.forEach((kt,ki)=>{
-      const k=[allK[ki][2],allK[ki][3]];
+      const k=[allK_roped[ki][2],allK_roped[ki][3]];
       const d=q[0]*k[0]+q[1]*k[1];
       const scaled=d/dk;
       scores.push(scaled);
@@ -866,7 +918,13 @@ function renderInput(){
     <strong>1.</strong> Split text into tokens (subword pieces)
     → <strong>2.</strong> Look up each token's ID in the vocabulary
     → <strong>3.</strong> Convert each ID into a learned embedding vector
-    → <strong>4.</strong> Add position encoding so the model knows word order
+    → <strong>4.</strong> These embeddings go directly into the transformer stack
+    <br><br>
+    <span class="step">WHAT ABOUT POSITION?</span>
+    The original 2017 transformer added sinusoidal position vectors to the embeddings.
+    Modern LLMs (LLaMA, Mistral, PaLM) use <em>Rotary Position Embeddings (RoPE)</em> instead —
+    RoPE applies position-dependent <strong>rotation</strong> to Q and K vectors <em>inside</em> each attention layer,
+    not as an additive step at the input. This means the token embeddings enter the stack unmodified.
   </div>`;
 
   function vc(v,type){
@@ -893,7 +951,7 @@ function renderInput(){
     h+=`<div class="flow-arrow">↓</div>`;
   });
 
-  // Stage 4: Embedding — same values as Pages 1 & 2
+  // Stage 4: Embedding — same values as all other diagrams
   h+=`<div class="pipe-stage"><div class="pipe-box" style="background:rgba(196,181,253,.06);border-color:rgba(196,181,253,.25)">`;
   h+=`<div class="label" style="color:var(--purple)">④ Embedding Lookup</div>`;
   h+=`<div class="embed-grid">`;
@@ -906,32 +964,17 @@ function renderInput(){
     h+=`</div>`;
   });
   h+=`</div></div><div class="pipe-note">Each ID → learned<br>d_model vector<br><b style="color:var(--dim)">4D toy (4096 in real)</b></div></div>`;
-  h+=`<div class="flow-arrow">+</div>`;
-
-  // Stage 5: Position encoding
-  const pos_enc=[[0.84,0.54,0.00,1.00],[0.91,0.42,0.01,1.00],[0.14,0.99,0.01,1.00]];
-  h+=`<div class="pipe-stage"><div class="pipe-box" style="background:rgba(253,186,116,.06);border-color:rgba(253,186,116,.25)">`;
-  h+=`<div class="label" style="color:var(--orange)">⑤ Position Encoding</div>`;
-  h+=`<div class="pos-grid">`;
-  pos_enc.forEach((pv,i)=>{
-    h+=`<div class="pos-col"><div class="pid">pos_${i}</div>`;
-    pv.forEach(v=>{h+=vc(v,'pos')});
-    h+=`</div>`;
-  });
-  h+=`</div></div><div class="pipe-note">Sinusoidal or RoPE<br>Tells model word <em>order</em></div></div>`;
   h+=`<div class="flow-arrow">↓</div>`;
 
-  // Result
-  h+=`<div class="flow-box" style="background:rgba(134,239,172,.08);border-color:rgba(134,239,172,.3);color:var(--green);font-size:13px;padding:12px 24px">Transformer Input = embedding + position = <em style="color:var(--amber)">what</em> + <em style="color:var(--amber)">where</em></div>`;
+  // Result — direct to stack
+  h+=`<div class="flow-box" style="background:rgba(134,239,172,.08);border-color:rgba(134,239,172,.3);color:var(--green);font-size:13px;padding:12px 24px">Transformer Input = token embedding → directly into Layer 1</div>`;
   h+=`<div style="margin-top:6px"><span class="note">→ These vectors enter Block 1 of the transformer stack (Diagram 4), then attention (Diagrams 1 & 2)</span></div>`;
 
   // ── WORKED EXAMPLE — all 3 tokens ──
   h+=`<div style="background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-top:14px">`;
   h+=`<div style="font:700 13px var(--mono);color:var(--orange);margin-bottom:10px">WORKED EXAMPLE — computing the input for every token</div>`;
-  h+=`<div style="font:13px var(--body);color:var(--dim);margin-bottom:10px">Same embeddings [0.9,0.1,0.3,0.2], [0.2,0.8,0.6,0.1], [0.1,0.3,0.9,0.7] used in Diagrams 1 & 2.</div>`;
+  h+=`<div style="font:13px var(--body);color:var(--dim);margin-bottom:10px">Same embeddings used throughout all diagrams: [0.9,0.1,0.3,0.2], [0.2,0.8,0.6,0.1], [0.1,0.3,0.9,0.7].</div>`;
   h+=`<div style="font:12.5px var(--mono);color:var(--text2);line-height:2.2;padding-left:8px">`;
-
-  h+=`<span style="color:var(--dim)">PE formula: PE(pos,2i) = sin(pos/10000^(2i/d)), PE(pos,2i+1) = cos(pos/10000^(2i/d))</span><br><br>`;
 
   words.forEach((w,ti)=>{
     h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
@@ -943,20 +986,23 @@ function renderInput(){
     h+=`<span style="color:var(--purple);font-weight:700">② EMBEDDING LOOKUP</span> <span style="color:var(--dim)">(row ${ids[ti]} from learned table)</span><br>`;
     h+=`<span style="padding-left:12px">embedding[${ids[ti]}] = <span style="color:var(--cyan);font-weight:700">[${raw_emb[ti].map(v=>v.toFixed(1)).join(', ')}]</span></span><br><br>`;
 
-    h+=`<span style="color:var(--orange);font-weight:700">③ POSITION ENCODING</span> <span style="color:var(--dim)">(position ${ti})</span><br>`;
-    h+=`<span style="padding-left:12px">pos_encoding[${ti}] = <span style="color:var(--orange);font-weight:700">[${pos_enc[ti].map(v=>v.toFixed(2)).join(', ')}]</span></span><br><br>`;
-
-    h+=`<span style="color:var(--green);font-weight:700">④ ADD — dimension by dimension:</span><br>`;
-    const dimL=['d₀','d₁','d₂','d₃'];
-    const result=raw_emb[ti].map((v,d)=>v+pos_enc[ti][d]);
-    dimL.forEach((d,di)=>{
-      h+=`<span style="padding-left:12px">${d}: <span style="color:var(--cyan)">${raw_emb[ti][di].toFixed(1)}</span> + <span style="color:var(--orange)">${pos_enc[ti][di].toFixed(2)}</span> = <span style="color:var(--green);font-weight:700">${result[di].toFixed(2)}</span></span><br>`;
-    });
-    h+=`<span style="padding-left:12px">transformer_input["${w}"] = <span style="color:var(--green);font-weight:700">[${result.map(v=>v.toFixed(2)).join(', ')}]</span></span>`;
+    h+=`<span style="color:var(--green);font-weight:700">③ THIS IS THE LAYER INPUT</span><br>`;
+    h+=`<span style="padding-left:12px">transformer_input["${w}"] = <span style="color:var(--green);font-weight:700">[${raw_emb[ti].map(v=>v.toFixed(1)).join(', ')}]</span></span><br>`;
+    h+=`<span style="padding-left:12px;color:var(--dim)">Position information is injected later via RoPE rotation on Q/K inside each attention layer</span>`;
     h+=`</div>`;
   });
 
-  h+=`<br><span style="color:var(--dim)">These 3 vectors enter the transformer stack. In Diagrams 1 & 2, we used the raw embeddings [0.9,0.1,0.3,0.2] etc. for simplicity — in a real model, the position-added versions above would be used instead.</span>`;
+  // RoPE explanation
+  h+=`<div style="border:1px solid rgba(253,186,116,.2);border-radius:8px;padding:14px 16px;margin-top:8px;background:rgba(253,186,116,.03)">`;
+  h+=`<span style="color:var(--orange);font-weight:700;font-size:13px">HOW RoPE WORKS (conceptually)</span><br><br>`;
+  h+=`<span style="color:var(--text2)">Instead of adding position vectors to embeddings, RoPE applies a rotation matrix R(θ) to the Q and K vectors after projection:</span><br><br>`;
+  h+=`<span style="padding-left:12px;color:var(--orange)">Q_pos = R(θ_pos) · Q &nbsp;&nbsp;&nbsp; K_pos = R(θ_pos) · K</span><br><br>`;
+  h+=`<span style="color:var(--text2)">The rotation angle θ depends on position and dimension:</span><br>`;
+  h+=`<span style="padding-left:12px;color:var(--dim)">θ_i = pos / 10000^(2i/d_k)</span><br><br>`;
+  h+=`<span style="color:var(--text2)">Key property: the dot product Q_m · K_n depends only on (m − n), giving <em style="color:var(--orange)">relative</em> position awareness. This is why RoPE generalizes to longer sequences than seen during training.</span><br><br>`;
+  h+=`<span style="color:var(--dim)">In our toy example we omit RoPE rotation to keep the arithmetic visible. In a real LLaMA model, RoPE is applied to Q/K in every attention layer before the dot product.</span>`;
+  h+=`</div>`;
+
   h+=`</div></div>`;
 
   h+=`</div>`;
@@ -1083,15 +1129,23 @@ function renderStack(){
   const allK_s=all_normed.map(e=>mm_s(e,Wk_s));
   const allV_s=all_normed.map(e=>mm_s(e,Wv_s));
 
+  // RoPE on Q and K
+  const allQ_sr=allQ_s.map((q,pos)=>rope(q,pos));
+  const allK_sr=allK_s.map((k,pos)=>rope(k,pos));
+
   h+=`<span style="padding-left:16px;color:var(--dim)">Project from normed vectors (same W_q, W_k, W_v as Diagrams 1,2,6):</span><br>`;
   ['The','cat','sat'].forEach((t,i)=>{
     h+=`<span style="padding-left:16px">${t}: Q=[${allQ_s[i].map(v=>v.toFixed(4)).join(', ')}]  K=[${allK_s[i].map(v=>v.toFixed(4)).join(', ')}]</span><br>`;
+  });
+  h+=`<span style="padding-left:16px;color:var(--orange)">RoPE applied → Q_r, K_r (position-rotated):</span><br>`;
+  ['The','cat','sat'].forEach((t,i)=>{
+    h+=`<span style="padding-left:16px">${t}: Q_r=[${allQ_sr[i].map(v=>v.toFixed(4)).join(', ')}]  K_r=[${allK_sr[i].map(v=>v.toFixed(4)).join(', ')}]</span><br>`;
   });
   h+=`<br>`;
 
   // sat = index 2: dot product / sqrt(d_k), causal mask, softmax, weighted sum
   const dk_s=Math.sqrt(4); // d_k = 4
-  const sat_sc_raw=[dot_s(allQ_s[2],allK_s[0]),dot_s(allQ_s[2],allK_s[1]),dot_s(allQ_s[2],allK_s[2])];
+  const sat_sc_raw=[dot_s(allQ_sr[2],allK_sr[0]),dot_s(allQ_sr[2],allK_sr[1]),dot_s(allQ_sr[2],allK_sr[2])];
   const sat_sc=sat_sc_raw.map(s=>s/dk_s);
   // sat is at position 2 → can see all 3 tokens (0,1,2) → no masking needed
   const sat_wts=sfm_s(sat_sc);
@@ -1410,20 +1464,34 @@ function renderBackward(){
     }
   });
   h+=`<br>`;
-  showMat('Q',Q,'cyan');showMat('K',K,'amber');showMat('V',V,'green');
+  showMat('Q (pre-RoPE)',Q,'cyan');showMat('K (pre-RoPE)',K,'amber');showMat('V',V,'green');
+
+  // RoPE rotation on Q and K
+  const Qr=Q.map((q,pos)=>rope(q,pos));
+  const Kr=K.map((k,pos)=>rope(k,pos));
+
+  h+=`<br><span style="color:var(--orange);font-weight:700;font-size:14px">STEP 1.5: RoPE rotation on Q and K</span><br>`;
+  h+=`<span style="color:var(--dim)">θ_i = pos / 10000^(2i/d_k). Pairs [0,1] and [2,3] rotated independently. V unchanged.</span><br><br>`;
+  toks.forEach((t,ti)=>{
+    h+=`<span style="padding-left:12px;color:var(--orange)">pos ${ti} ("${t}"):</span><br>`;
+    h+=`<span style="padding-left:20px;color:var(--cyan)">Q: [${Q[ti].map(v=>$(v)).join(', ')}] → [${Qr[ti].map(v=>$(v)).join(', ')}]</span><br>`;
+    h+=`<span style="padding-left:20px;color:var(--amber)">K: [${K[ti].map(v=>$(v)).join(', ')}] → [${Kr[ti].map(v=>$(v)).join(', ')}]</span><br>`;
+  });
+  h+=`<br>`;
+  showMat('Q_r (after RoPE)',Qr,'cyan');showMat('K_r (after RoPE)',Kr,'amber');
   h+=`</div>`;
 
-  // Step 2: S = QK^T / sqrt(d_k)
+  // Step 2: S = Qr·Kr^T / sqrt(d_k)  (using RoPE-rotated vectors)
   function dot2(a,b){return a.reduce((s,v,i)=>s+v*b[i],0)}
   const dk_b=Math.sqrt(4); // d_k = 4
-  const S_raw=Q.map(q=>K.map(k=>dot2(q,k)));
+  const S_raw=Qr.map(q=>Kr.map(k=>dot2(q,k)));
   const S=S_raw.map(r=>r.map(v=>v/dk_b));
 
   h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
-  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">STEP 2: S = QKᵀ / √d_k (3×3 score matrix, d_k=4, √d_k=${dk_b.toFixed(1)})</span><br><br>`;
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">STEP 2: S = Q_r · K_rᵀ / √d_k (3×3, using RoPE-rotated vectors)</span><br><br>`;
   S_raw.forEach((r,qi)=>{
     r.forEach((v,ki)=>{
-      const terms=Q[qi].map((qv,d)=>`${$(qv)}×${$(K[ki][d])}`).join(' + ');
+      const terms=Qr[qi].map((qv,d)=>`${$(qv)}×${$(Kr[ki][d])}`).join(' + ');
       h+=`<span style="padding-left:12px">S[${toks[qi]},${toks[ki]}] = (${terms}) / ${dk_b.toFixed(1)} = ${$(v)} / ${dk_b.toFixed(1)} = <span style="color:var(--amber);font-weight:700">${$(S[qi][ki])}</span></span><br>`;
     });
   });
@@ -1750,38 +1818,65 @@ function renderBackward(){
   showMat('dL/dS',dLdS,'amber',6);
   h+=`</div>`;
 
-  // dL/dQ = (1/√d_k) · dL/dS @ K
-  const dLdQ_unscaled=mm(dLdS,K);
-  const dLdQ=dLdQ_unscaled.map(r=>r.map(v=>v/dk_b));
+  // dL/dQr = (1/√d_k) · dL/dS @ Kr (rotated K)
+  const dLdQr_unscaled=mm(dLdS,Kr);
+  const dLdQr=dLdQr_unscaled.map(r=>r.map(v=>v/dk_b));
+  // dL/dQ = R(-θ) · dL/dQr  (inverse RoPE to get gradient w.r.t. pre-rotation Q)
+  const dLdQ=dLdQr.map((row,pos)=>rope_inv(row,pos));
+
   h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
-  h+=`<span style="color:var(--cyan);font-weight:700;font-size:14px">GRADIENT 9: dL/dQ = (1/√d_k) · dL/dS · K (3×4)</span><br>`;
-  h+=`<span style="color:var(--dim)">Chain rule: S = QKᵀ/√d_k → dL/dQ = (1/√d_k) · dL/dS · K</span><br><br>`;
+  h+=`<span style="color:var(--cyan);font-weight:700;font-size:14px">GRADIENT 9: dL/dQ via RoPE chain rule</span><br>`;
+  h+=`<span style="color:var(--dim)">S = Q_r · K_rᵀ/√d_k where Q_r = RoPE(Q). Two steps:</span><br>`;
+  h+=`<span style="color:var(--dim)">Step A: dL/dQ_r = (1/√d_k) · dL/dS · K_r</span><br>`;
+  h+=`<span style="color:var(--dim)">Step B: dL/dQ = R(−θ) · dL/dQ_r &nbsp;(inverse rotation — R is orthogonal so Rᵀ = R⁻¹)</span><br><br>`;
+
+  h+=`<span style="color:var(--cyan);font-weight:700">Step A — dL/dQ_r:</span><br>`;
   toks.forEach((qt,qi)=>{
-    h+=`<span style="padding-left:12px;color:var(--cyan)">dL/dQ[${qt}]:</span><br>`;
+    h+=`<span style="padding-left:12px;color:var(--cyan)">dL/dQ_r[${qt}]:</span><br>`;
     for(let j=0;j<4;j++){
-      const terms=dLdS[qi].map((v,k)=>`${$(v,6)}×${$(K[k][j])}`).join(' + ');
-      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--cyan);font-weight:700">${$(dLdQ[qi][j],6)}</span></span><br>`;
+      const terms=dLdS[qi].map((v,k)=>`${$(v,6)}×${$(Kr[k][j])}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--cyan)">${$(dLdQr[qi][j],6)}</span></span><br>`;
     }
     h+=`<br>`;
   });
+  showMat('dL/dQ_r',dLdQr,'cyan',6);
+
+  h+=`<br><span style="color:var(--cyan);font-weight:700">Step B — inverse RoPE → dL/dQ:</span><br>`;
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--cyan)">dL/dQ[${qt}]: R(−θ_${qi}) · [${dLdQr[qi].map(v=>$(v,6)).join(', ')}] = <span style="font-weight:700">[${dLdQ[qi].map(v=>$(v,6)).join(', ')}]</span></span><br>`;
+  });
+  h+=`<br>`;
   showMat('dL/dQ',dLdQ,'cyan',6);
   h+=`</div>`;
 
-  // dL/dK = (1/√d_k) · dL/dSᵀ @ Q
-  const dLdK_unscaled=mm(T(dLdS),Q);
-  const dLdK=dLdK_unscaled.map(r=>r.map(v=>v/dk_b));
+  // dL/dKr = (1/√d_k) · dL/dSᵀ @ Qr
+  const dLdKr_unscaled=mm(T(dLdS),Qr);
+  const dLdKr=dLdKr_unscaled.map(r=>r.map(v=>v/dk_b));
+  // dL/dK = R(-θ) · dL/dKr
+  const dLdK=dLdKr.map((row,pos)=>rope_inv(row,pos));
+
   h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
-  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 10: dL/dK = (1/√d_k) · dL/dSᵀ · Q (3×4)</span><br>`;
-  h+=`<span style="color:var(--dim)">Chain rule: S = QKᵀ/√d_k → dL/dK = (1/√d_k) · dL/dSᵀ · Q</span><br><br>`;
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 10: dL/dK via RoPE chain rule</span><br>`;
+  h+=`<span style="color:var(--dim)">Step A: dL/dK_r = (1/√d_k) · dL/dSᵀ · Q_r</span><br>`;
+  h+=`<span style="color:var(--dim)">Step B: dL/dK = R(−θ) · dL/dK_r</span><br><br>`;
+
   const dLdST=T(dLdS);
+  h+=`<span style="color:var(--amber);font-weight:700">Step A — dL/dK_r:</span><br>`;
   toks.forEach((qt,qi)=>{
-    h+=`<span style="padding-left:12px;color:var(--amber)">dL/dK[${qt}]:</span><br>`;
+    h+=`<span style="padding-left:12px;color:var(--amber)">dL/dK_r[${qt}]:</span><br>`;
     for(let j=0;j<4;j++){
-      const terms=dLdST[qi].map((v,k)=>`${$(v,6)}×${$(Q[k][j])}`).join(' + ');
-      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--amber);font-weight:700">${$(dLdK[qi][j],6)}</span></span><br>`;
+      const terms=dLdST[qi].map((v,k)=>`${$(v,6)}×${$(Qr[k][j])}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--amber)">${$(dLdKr[qi][j],6)}</span></span><br>`;
     }
     h+=`<br>`;
   });
+  showMat('dL/dK_r',dLdKr,'amber',6);
+
+  h+=`<br><span style="color:var(--amber);font-weight:700">Step B — inverse RoPE → dL/dK:</span><br>`;
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--amber)">dL/dK[${qt}]: R(−θ_${qi}) · [${dLdKr[qi].map(v=>$(v,6)).join(', ')}] = <span style="font-weight:700">[${dLdK[qi].map(v=>$(v,6)).join(', ')}]</span></span><br>`;
+  });
+  h+=`<br>`;
   showMat('dL/dK',dLdK,'amber',6);
   h+=`</div>`;
 
