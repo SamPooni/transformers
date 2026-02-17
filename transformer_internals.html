@@ -1185,45 +1185,67 @@ function renderStack(){
   });
   h+=`<span style="padding-left:16px">norm₂ = <span style="color:var(--cyan);font-weight:700">[${after_gamma2.map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
 
-  // FFN — same W₁, W₂ as Diagram 6 (simple: W₁ → ReLU → W₂)
-  h+=`<span style="color:var(--orange);font-weight:700">⑤ FFN (Feed-Forward Network)</span><br>`;
-  h+=`<span style="padding-left:16px;color:var(--dim)">Same W₁ (4→6) and W₂ (6→4) as Diagram 6. H = norm₂ × W₁, Z = ReLU(H), FFN = Z × W₂</span><br><br>`;
+  // FFN — SwiGLU: gate = SiLU(norm₂ · W_gate), up = norm₂ · W_up, FFN = (gate ⊙ up) · W_down
+  h+=`<span style="color:var(--orange);font-weight:700">⑤ FFN (SwiGLU — as in LLaMA/Mistral)</span><br>`;
+  h+=`<span style="padding-left:16px;color:var(--dim)">SwiGLU(x) = SiLU(x·W_gate) ⊙ (x·W_up) · W_down. Three learned matrices. SiLU(x) = x·σ(x)</span><br><br>`;
 
-  // Same matrices as Page 6
-  const W1_s=[[0.5,-0.6,0.3,-0.2,0.4,-0.5],[-0.3,0.4,-0.6,0.5,-0.2,0.3],[0.2,-0.4,0.5,-0.3,0.6,-0.1],[-0.4,0.3,-0.2,0.4,-0.5,0.6]];
-  const W2_s=[[0.3,-0.2,0.5,0.1],[-0.4,0.3,0.1,-0.2],[0.2,-0.1,-0.3,0.4],[0.1,0.5,-0.2,0.3],[-0.3,0.2,0.4,-0.1],[0.5,-0.4,0.1,0.2]];
+  // Same matrices as Diagram 6
+  const Wg_s=[[0.5,-0.6,0.3,-0.2,0.4,-0.5],[-0.3,0.4,-0.6,0.5,-0.2,0.3],[0.2,-0.4,0.5,-0.3,0.6,-0.1],[-0.4,0.3,-0.2,0.4,-0.5,0.6]];
+  const Wu_s=[[0.4,0.3,-0.5,0.2,-0.3,0.6],[-0.2,0.5,0.3,-0.4,0.1,-0.3],[0.6,-0.1,0.2,0.5,-0.4,0.3],[-0.3,0.4,-0.1,0.3,0.6,-0.2]];
+  const Wd_s=[[0.3,-0.2,0.5,0.1],[-0.4,0.3,0.1,-0.2],[0.2,-0.1,-0.3,0.4],[0.1,0.5,-0.2,0.3],[-0.3,0.2,0.4,-0.1],[0.5,-0.4,0.1,0.2]];
 
-  h+=`<span style="padding-left:16px;color:var(--dim)">W₁ (4×6) — learned, expands to hidden dim:</span><br>`;
-  W1_s.forEach(row=>{h+=`<span style="padding-left:24px">[${row.join(', ')}]</span><br>`});
+  function sigmoid_s(x){return 1/(1+Math.exp(-x))}
+  function silu_s(x){return x*sigmoid_s(x)}
+
+  h+=`<span style="padding-left:16px;color:var(--dim)">W_gate (4×6):</span><br>`;
+  Wg_s.forEach(row=>{h+=`<span style="padding-left:24px">[${row.join(', ')}]</span><br>`});
+  h+=`<span style="padding-left:16px;color:var(--dim)">W_up (4×6):</span><br>`;
+  Wu_s.forEach(row=>{h+=`<span style="padding-left:24px">[${row.join(', ')}]</span><br>`});
+  h+=`<span style="padding-left:16px;color:var(--dim)">W_down (6×4):</span><br>`;
+  Wd_s.forEach(row=>{h+=`<span style="padding-left:24px">[${row.join(', ')}]</span><br>`});
   h+=`<br>`;
-  h+=`<span style="padding-left:16px;color:var(--dim)">W₂ (6×4) — learned, compresses back:</span><br>`;
-  W2_s.forEach(row=>{h+=`<span style="padding-left:24px">[${row.join(', ')}]</span><br>`});
-  h+=`<br>`;
 
-  // H = norm₂ × W₁
-  const H_s=mm_s(after_gamma2,W1_s);
-  h+=`<span style="padding-left:16px;color:var(--orange)">H = norm₂ × W₁ [4→6]:</span><br>`;
+  // gate_pre = norm₂ × W_gate
+  const gate_pre_s=mm_s(after_gamma2,Wg_s);
+  h+=`<span style="padding-left:16px;color:var(--orange)">gate_pre = norm₂ × W_gate [4→6]:</span><br>`;
   for(let j=0;j<6;j++){
-    const terms=after_gamma2.map((v,i)=>`${v.toFixed(4)}×${W1_s[i][j].toFixed(1)}`).join(' + ');
-    h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--orange);font-weight:700">${H_s[j].toFixed(4)}</span></span><br>`;
+    const terms=after_gamma2.map((v,i)=>`${v.toFixed(4)}×${Wg_s[i][j].toFixed(1)}`).join(' + ');
+    h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--orange);font-weight:700">${gate_pre_s[j].toFixed(4)}</span></span><br>`;
   }
   h+=`<br>`;
 
-  // Z = ReLU(H)
-  h+=`<span style="padding-left:16px;color:var(--pink)">Z = ReLU(H):</span><br>`;
-  h+=`<span style="padding-left:16px;color:var(--dim)">ReLU(x) = max(0, x) — negative values become 0</span><br>`;
-  const Z_s=H_s.map(v=>Math.max(0,v));
+  // gate = SiLU(gate_pre)
+  const gate_s=gate_pre_s.map(v=>silu_s(v));
+  h+=`<span style="padding-left:16px;color:var(--pink)">gate = SiLU(gate_pre) — SiLU(x) = x · σ(x):</span><br>`;
   for(let j=0;j<6;j++){
-    const killed=H_s[j]<=0;
-    h+=`<span style="padding-left:20px">[${j}]: max(0, ${H_s[j].toFixed(4)}) = <span style="color:${killed?'var(--red)':'var(--pink)'};font-weight:700">${Z_s[j].toFixed(4)}${killed?' ← KILLED':''}</span></span><br>`;
+    const v=gate_pre_s[j];
+    const sig=sigmoid_s(v);
+    h+=`<span style="padding-left:20px">[${j}]: SiLU(${v.toFixed(4)}) = ${v.toFixed(4)} × σ(${v.toFixed(4)}) = ${v.toFixed(4)} × ${sig.toFixed(4)} = <span style="color:var(--pink);font-weight:700">${gate_s[j].toFixed(4)}</span></span><br>`;
   }
   h+=`<br>`;
 
-  // FFN = Z × W₂
-  const ffn_out=mm_s(Z_s,W2_s);
-  h+=`<span style="padding-left:16px;color:var(--orange)">FFN = Z × W₂ [6→4]:</span><br>`;
+  // up = norm₂ × W_up
+  const up_s=mm_s(after_gamma2,Wu_s);
+  h+=`<span style="padding-left:16px;color:var(--cyan)">up = norm₂ × W_up [4→6]:</span><br>`;
+  for(let j=0;j<6;j++){
+    const terms=after_gamma2.map((v,i)=>`${v.toFixed(4)}×${Wu_s[i][j].toFixed(1)}`).join(' + ');
+    h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--cyan);font-weight:700">${up_s[j].toFixed(4)}</span></span><br>`;
+  }
+  h+=`<br>`;
+
+  // hidden = gate ⊙ up (element-wise)
+  const hidden_s=gate_s.map((g,i)=>g*up_s[i]);
+  h+=`<span style="padding-left:16px;color:var(--purple)">hidden = gate ⊙ up (element-wise multiply):</span><br>`;
+  for(let j=0;j<6;j++){
+    h+=`<span style="padding-left:20px">[${j}]: ${gate_s[j].toFixed(4)} × ${up_s[j].toFixed(4)} = <span style="color:var(--purple);font-weight:700">${hidden_s[j].toFixed(4)}</span></span><br>`;
+  }
+  h+=`<br>`;
+
+  // FFN = hidden × W_down
+  const ffn_out=mm_s(hidden_s,Wd_s);
+  h+=`<span style="padding-left:16px;color:var(--orange)">FFN = hidden × W_down [6→4]:</span><br>`;
   for(let j=0;j<4;j++){
-    const terms=Z_s.map((v,i)=>`${v.toFixed(4)}×${W2_s[i][j].toFixed(1)}`).join(' + ');
+    const terms=hidden_s.map((v,i)=>`${v.toFixed(4)}×${Wd_s[i][j].toFixed(1)}`).join(' + ');
     h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--orange);font-weight:700">${ffn_out[j].toFixed(4)}</span></span><br>`;
   }
   h+=`<span style="padding-left:16px">FFN output = <span style="color:var(--orange);font-weight:700">[${ffn_out.map(v=>v.toFixed(4)).join(', ')}]</span></span><br><br>`;
@@ -1385,9 +1407,9 @@ function renderBackward(){
     We trace the <strong>complete forward pass</strong> then <strong>backpropagate gradients</strong> through every step.
     Same W_q, W_k, W_v as Diagrams 1 & 2. Same "The cat sat" embeddings throughout.
     <br><br>
-    <span class="step">FORWARD:</span> X → RMSNorm → Q,K,V → S=QKᵀ/√d_k → A=softmax(S) → O_raw=AV → O=O_raw·W_O → resid₁=X+O → norm₂=RMSNorm(resid₁) → H=norm₂·W₁ → Z=ReLU(H) → Y=ZW₂
+    <span class="step">FORWARD:</span> X → RMSNorm → Q,K,V → RoPE(Q,K) → S=Q_rK_rᵀ/√d_k → A=softmax(S) → O_raw=AV → O=O_raw·W_O → resid₁=X+O → norm₂=RMSNorm(resid₁) → SwiGLU(norm₂) → Y
     <br>
-    <span class="step">BACKWARD:</span> dL/dY → dL/dW₂ → dL/dZ → dL/dH → dL/dW₁ → dL/dO → dL/dA → dL/dS → dL/dQ,dK,dV → dL/dWq,Wk,Wv
+    <span class="step">BACKWARD:</span> dL/dY → dL/dW_down → dL/dhidden → dL/d(gate,up) → dL/dW_gate,W_up → dL/dnorm₂ → dL/dO_raw → dL/dA → dL/dS → dL/dQ_r,K_r → RoPE⁻¹ → dL/dQ,K,V → dL/dWq,Wk,Wv
   </div>`;
 
   // Helper to show a matrix
@@ -1601,54 +1623,81 @@ function renderBackward(){
   showMat('norm₂',norm2_b,'purple');
   h+=`</div>`;
 
-  // Step 8: H = norm₂ × W₁
-  const W1=[[0.5,-0.6,0.3,-0.2,0.4,-0.5],[-0.3,0.4,-0.6,0.5,-0.2,0.3],[0.2,-0.4,0.5,-0.3,0.6,-0.1],[-0.4,0.3,-0.2,0.4,-0.5,0.6]];
-  const H=mm(norm2_b,W1);
+  // Step 8: SwiGLU forward — gate_pre = norm₂ · W_gate, up = norm₂ · W_up
+  const Wg=[[0.5,-0.6,0.3,-0.2,0.4,-0.5],[-0.3,0.4,-0.6,0.5,-0.2,0.3],[0.2,-0.4,0.5,-0.3,0.6,-0.1],[-0.4,0.3,-0.2,0.4,-0.5,0.6]];
+  const Wu=[[0.4,0.3,-0.5,0.2,-0.3,0.6],[-0.2,0.5,0.3,-0.4,0.1,-0.3],[0.6,-0.1,0.2,0.5,-0.4,0.3],[-0.3,0.4,-0.1,0.3,0.6,-0.2]];
+  const gate_pre=mm(norm2_b,Wg);
+  const up_pre=mm(norm2_b,Wu);
+
+  function sigmoid_b(x){return 1/(1+Math.exp(-x))}
+  function silu_b(x){return x*sigmoid_b(x)}
+  function silu_deriv(x){const s=sigmoid_b(x);return s*(1+x*(1-s))}
 
   h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
-  h+=`<span style="color:var(--orange);font-weight:700;font-size:14px">STEP 8: H = norm₂ × W₁ (FFN hidden layer, 4→6, same W₁ as Diagram 4)</span><br><br>`;
-  showMat('W₁ (4×6)',W1,'dim',1);h+=`<br>`;
+  h+=`<span style="color:var(--orange);font-weight:700;font-size:14px">STEP 8: SwiGLU FFN forward (same W_gate, W_up, W_down as Diagram 4)</span><br>`;
+  h+=`<span style="color:var(--dim)">SwiGLU(x) = SiLU(x·W_gate) ⊙ (x·W_up) · W_down. SiLU(x) = x·σ(x)</span><br><br>`;
+
+  showMat('W_gate (4×6)',Wg,'dim',1);h+=`<br>`;
+  showMat('W_up (4×6)',Wu,'dim',1);h+=`<br>`;
+
+  h+=`<span style="color:var(--orange);font-weight:700">gate_pre = norm₂ × W_gate:</span><br>`;
   toks.forEach((qt,qi)=>{
-    h+=`<span style="padding-left:12px;color:var(--orange)">H[${qt}]:</span><br>`;
+    h+=`<span style="padding-left:12px;color:var(--orange)">gate_pre[${qt}]:</span><br>`;
     for(let j=0;j<6;j++){
-      const terms=O[qi].map((v,i)=>`${$(v)}×${$(W1[i][j],1)}`).join(' + ');
-      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--orange);font-weight:700">${$(H[qi][j])}</span></span><br>`;
+      const terms=norm2_b[qi].map((v,i)=>`${$(v)}×${$(Wg[i][j],1)}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--orange);font-weight:700">${$(gate_pre[qi][j])}</span></span><br>`;
     }
     h+=`<br>`;
   });
-  showMat('H',H,'orange');
-  h+=`</div>`;
+  showMat('gate_pre',gate_pre,'orange');
 
-  // Step 6: Z = ReLU(H)
-  const Z=H.map(r=>r.map(v=>Math.max(0,v)));
-
-  h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
-  h+=`<span style="color:var(--pink);font-weight:700;font-size:14px">STEP 9: Z = ReLU(H)</span><br>`;
-  h+=`<span style="color:var(--dim)">ReLU(x) = max(0, x) — negative values become 0</span><br><br>`;
+  // gate = SiLU(gate_pre)
+  const gate=gate_pre.map(r=>r.map(v=>silu_b(v)));
+  h+=`<br><span style="color:var(--pink);font-weight:700">gate = SiLU(gate_pre):</span><br>`;
+  h+=`<span style="color:var(--dim)">SiLU(x) = x · σ(x). Unlike ReLU, SiLU is smooth and non-monotonic — never kills neurons.</span><br><br>`;
   toks.forEach((qt,qi)=>{
-    h+=`<span style="padding-left:12px;color:var(--pink)">Z[${qt}]:</span><br>`;
+    h+=`<span style="padding-left:12px;color:var(--pink)">gate[${qt}]:</span><br>`;
     for(let j=0;j<6;j++){
-      const hv=H[qi][j];
-      const zv=Z[qi][j];
-      const killed=hv<=0;
-      h+=`<span style="padding-left:20px">[${j}]: max(0, ${$(hv)}) = <span style="color:${killed?'var(--red)':'var(--pink)'};font-weight:700">${$(zv)}${killed?' ← KILLED':''}  </span></span><br>`;
+      const v=gate_pre[qi][j];
+      const sig=sigmoid_b(v);
+      h+=`<span style="padding-left:20px">[${j}]: ${$(v)} × σ(${$(v)}) = ${$(v)} × ${$(sig)} = <span style="color:var(--pink);font-weight:700">${$(gate[qi][j])}</span></span><br>`;
     }
     h+=`<br>`;
   });
-  showMat('Z',Z,'pink');
+  showMat('gate',gate,'pink');
+
+  h+=`<br><span style="color:var(--cyan);font-weight:700">up = norm₂ × W_up:</span><br>`;
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--cyan)">up[${qt}]: [${up_pre[qi].map(v=>$(v)).join(', ')}]</span><br>`;
+  });
+  showMat('up',up_pre,'cyan');
+
+  // hidden = gate ⊙ up
+  const hidden=gate.map((r,i)=>r.map((v,j)=>v*up_pre[i][j]));
+  h+=`<br><span style="color:var(--purple);font-weight:700">hidden = gate ⊙ up (element-wise):</span><br>`;
+  toks.forEach((qt,qi)=>{
+    h+=`<span style="padding-left:12px;color:var(--purple)">hidden[${qt}]:</span><br>`;
+    for(let j=0;j<6;j++){
+      h+=`<span style="padding-left:20px">[${j}]: ${$(gate[qi][j])} × ${$(up_pre[qi][j])} = <span style="color:var(--purple);font-weight:700">${$(hidden[qi][j])}</span></span><br>`;
+    }
+    h+=`<br>`;
+  });
+  showMat('hidden',hidden,'purple');
   h+=`</div>`;
 
-  // Step 7: Y = ZW₂
-  const W2=[[0.3,-0.2,0.5,0.1],[-0.4,0.3,0.1,-0.2],[0.2,-0.1,-0.3,0.4],[0.1,0.5,-0.2,0.3],[-0.3,0.2,0.4,-0.1],[0.5,-0.4,0.1,0.2]];
-  const Y=mm(Z,W2);
+  // Step 9: (no separate ReLU step — SiLU is inside SwiGLU above)
+
+  // Step 10: Y = hidden · W_down
+  const Wd=[[0.3,-0.2,0.5,0.1],[-0.4,0.3,0.1,-0.2],[0.2,-0.1,-0.3,0.4],[0.1,0.5,-0.2,0.3],[-0.3,0.2,0.4,-0.1],[0.5,-0.4,0.1,0.2]];
+  const Y=mm(hidden,Wd);
 
   h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
-  h+=`<span style="color:var(--cyan);font-weight:700;font-size:14px">STEP 10: Y = ZW₂ (FFN output, 6→4)</span><br><br>`;
-  showMat('W₂ (6×4)',W2,'dim',1);h+=`<br>`;
+  h+=`<span style="color:var(--cyan);font-weight:700;font-size:14px">STEP 10: Y = hidden × W_down (FFN output, 6→4)</span><br><br>`;
+  showMat('W_down (6×4)',Wd,'dim',1);h+=`<br>`;
   toks.forEach((qt,qi)=>{
     h+=`<span style="padding-left:12px;color:var(--cyan)">Y[${qt}]:</span><br>`;
     for(let j=0;j<4;j++){
-      const terms=Z[qi].map((v,i)=>`${$(v)}×${$(W2[i][j],1)}`).join(' + ');
+      const terms=hidden[qi].map((v,i)=>`${$(v)}×${$(Wd[i][j],1)}`).join(' + ');
       h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--cyan);font-weight:700">${$(Y[qi][j])}</span></span><br>`;
     }
     h+=`<br>`;
@@ -1674,83 +1723,87 @@ function renderBackward(){
   showMat('dL/dY',dLdY,'amber');
   h+=`</div>`;
 
-  // dL/dW₂ = Zᵀ @ dL/dY
-  const dLdW2=mm(T(Z),dLdY);
+  // dL/dW_down = hiddenᵀ @ dL/dY
+  const dLdWd=mm(T(hidden),dLdY);
   h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
-  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 2: dL/dW₂ = Zᵀ · dL/dY (6×4)</span><br>`;
-  h+=`<span style="color:var(--dim)">Chain rule: Y = ZW₂ → dL/dW₂ = Zᵀ · dL/dY</span><br><br>`;
-  const ZT=T(Z);
-  dLdW2.forEach((r,ri)=>{
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 2: dL/dW_down = hiddenᵀ · dL/dY (6×4)</span><br>`;
+  h+=`<span style="color:var(--dim)">Chain rule: Y = hidden·W_down → dL/dW_down = hiddenᵀ · dL/dY</span><br><br>`;
+  const hidT=T(hidden);
+  dLdWd.forEach((r,ri)=>{
     r.forEach((v,ci)=>{
-      const terms=ZT[ri].map((z,k)=>`${$(z)}×${$(dLdY[k][ci])}`).join(' + ');
+      const terms=hidT[ri].map((z,k)=>`${$(z)}×${$(dLdY[k][ci])}`).join(' + ');
       h+=`<span style="padding-left:12px">[${ri},${ci}] = ${terms} = <span style="color:var(--amber);font-weight:700">${$(v,6)}</span></span><br>`;
     });
   });
-  h+=`<br>`;showMat('dL/dW₂',dLdW2,'amber',6);
+  h+=`<br>`;showMat('dL/dW_down',dLdWd,'amber',6);
   h+=`</div>`;
 
-  // dL/dZ = dL/dY @ W₂ᵀ
-  const dLdZ=mm(dLdY,T(W2));
+  // dL/dhidden = dL/dY @ W_downᵀ
+  const dLdhidden=mm(dLdY,T(Wd));
   h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
-  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 3: dL/dZ = dL/dY · W₂ᵀ (3×6)</span><br>`;
-  h+=`<span style="color:var(--dim)">Chain rule: Z → Y = ZW₂ → dL/dZ = dL/dY · W₂ᵀ</span><br><br>`;
-  const W2T=T(W2);
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 3: dL/dhidden = dL/dY · W_downᵀ (3×6)</span><br>`;
+  h+=`<span style="color:var(--dim)">Chain rule: hidden → Y = hidden·W_down → dL/dhidden = dL/dY · W_downᵀ</span><br><br>`;
+  const WdT=T(Wd);
   toks.forEach((qt,qi)=>{
-    h+=`<span style="padding-left:12px;color:var(--amber)">dL/dZ[${qt}]:</span><br>`;
+    h+=`<span style="padding-left:12px;color:var(--amber)">dL/dhidden[${qt}]:</span><br>`;
     for(let j=0;j<6;j++){
-      const terms=dLdY[qi].map((v,k)=>`${$(v)}×${$(W2T[k][j],1)}`).join(' + ');
-      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--amber);font-weight:700">${$(dLdZ[qi][j],6)}</span></span><br>`;
+      const terms=dLdY[qi].map((v,k)=>`${$(v)}×${$(WdT[k][j],1)}`).join(' + ');
+      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--amber);font-weight:700">${$(dLdhidden[qi][j],6)}</span></span><br>`;
     }
     h+=`<br>`;
   });
-  showMat('dL/dZ',dLdZ,'amber',6);
+  showMat('dL/dhidden',dLdhidden,'amber',6);
   h+=`</div>`;
 
-  // dL/dH = dL/dZ ⊙ ReLU'(H)
-  const dLdH=dLdZ.map((r,i)=>r.map((v,j)=>H[i][j]>0?v:0));
+  // SwiGLU backward: hidden = gate ⊙ up
+  // dL/dgate = dL/dhidden ⊙ up
+  // dL/dup = dL/dhidden ⊙ gate
+  // dL/dgate_pre = dL/dgate ⊙ SiLU'(gate_pre)
+  const dLdgate=dLdhidden.map((r,i)=>r.map((v,j)=>v*up_pre[i][j]));
+  const dLdup=dLdhidden.map((r,i)=>r.map((v,j)=>v*gate[i][j]));
+  const dLdgate_pre=dLdgate.map((r,i)=>r.map((v,j)=>v*silu_deriv(gate_pre[i][j])));
+
   h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
-  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 4: dL/dH = dL/dZ ⊙ ReLU'(H)</span><br>`;
-  h+=`<span style="color:var(--dim)">ReLU'(x) = 1 if x > 0, else 0. Gradient dies where ReLU killed the activation.</span><br><br>`;
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 4: SwiGLU internal gradients</span><br>`;
+  h+=`<span style="color:var(--dim)">hidden = gate ⊙ up, gate = SiLU(gate_pre)</span><br>`;
+  h+=`<span style="color:var(--dim)">dL/dgate = dL/dhidden ⊙ up, &nbsp;dL/dup = dL/dhidden ⊙ gate</span><br>`;
+  h+=`<span style="color:var(--dim)">dL/dgate_pre = dL/dgate ⊙ SiLU'(gate_pre), where SiLU'(x) = σ(x)(1 + x(1−σ(x)))</span><br><br>`;
+
   toks.forEach((qt,qi)=>{
-    h+=`<span style="padding-left:12px;color:var(--amber)">dL/dH[${qt}]:</span><br>`;
+    h+=`<span style="padding-left:12px;color:var(--orange)">${qt}:</span><br>`;
     for(let j=0;j<6;j++){
-      const alive=H[qi][j]>0;
-      h+=`<span style="padding-left:20px">[${j}]: H=${$(H[qi][j])} ${alive?'> 0 → pass':'≤ 0 → BLOCK'}: ${$(dLdZ[qi][j],6)} × ${alive?'1':'0'} = <span style="color:${alive?'var(--amber)':'var(--red)'};font-weight:700">${$(dLdH[qi][j],6)}${alive?'':' ← gradient dead'}</span></span><br>`;
+      const gp=gate_pre[qi][j];
+      const sd=silu_deriv(gp);
+      h+=`<span style="padding-left:20px;color:var(--dim)">[${j}]: dL/dgate=${$(dLdhidden[qi][j],6)}×${$(up_pre[qi][j])}=${$(dLdgate[qi][j],6)} &nbsp; SiLU'(${$(gp)})=${$(sd)} &nbsp; dL/dgate_pre=<span style="color:var(--amber);font-weight:700">${$(dLdgate_pre[qi][j],6)}</span></span><br>`;
     }
     h+=`<br>`;
   });
-  showMat('dL/dH',dLdH,'amber',6);
+  showMat('dL/dgate_pre',dLdgate_pre,'amber',6);
+  showMat('dL/dup',dLdup,'cyan',6);
   h+=`</div>`;
 
-  // dL/dW₁ = norm₂ᵀ @ dL/dH (since H = norm₂ · W₁)
-  const dLdW1=mm(T(norm2_b),dLdH);
+  // dL/dW_gate = norm₂ᵀ · dL/dgate_pre, dL/dW_up = norm₂ᵀ · dL/dup
+  const dLdWg=mm(T(norm2_b),dLdgate_pre);
+  const dLdWu=mm(T(norm2_b),dLdup);
   h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
-  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 5: dL/dW₁ = norm₂ᵀ · dL/dH (4×6)</span><br>`;
-  h+=`<span style="color:var(--dim)">Chain rule: H = norm₂·W₁ → dL/dW₁ = norm₂ᵀ · dL/dH</span><br><br>`;
-  const N2T=T(norm2_b);
-  dLdW1.forEach((r,ri)=>{
-    r.forEach((v,ci)=>{
-      const terms=N2T[ri].map((o,k)=>`${$(o)}×${$(dLdH[k][ci],6)}`).join(' + ');
-      h+=`<span style="padding-left:12px">[${ri},${ci}] = ${terms} = <span style="color:var(--amber);font-weight:700">${$(v,6)}</span></span><br>`;
-    });
-  });
-  h+=`<br>`;showMat('dL/dW₁',dLdW1,'amber',6);
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 5: dL/dW_gate, dL/dW_up = norm₂ᵀ · dL/d(gate_pre, up)</span><br>`;
+  h+=`<span style="color:var(--dim)">Since gate_pre = norm₂·W_gate → dL/dW_gate = norm₂ᵀ · dL/dgate_pre (and same for up)</span><br><br>`;
+  showMat('dL/dW_gate',dLdWg,'orange',6);
+  showMat('dL/dW_up',dLdWu,'cyan',6);
   h+=`</div>`;
 
-  // dL/dnorm₂ = dL/dH @ W₁ᵀ (since H = norm₂ · W₁)
-  const dLdnorm2=mm(dLdH,T(W1));
+  // dL/dnorm₂ = dL/dgate_pre · W_gateᵀ + dL/dup · W_upᵀ  → dL/dO (through residual)
+  const dLdn2_gate=mm(dLdgate_pre,T(Wg));
+  const dLdn2_up=mm(dLdup,T(Wu));
+  const dLdnorm2=dLdn2_gate.map((r,i)=>r.map((v,j)=>v+dLdn2_up[i][j]));
+
   h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">`;
-  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 6: dL/dnorm₂ = dL/dH · W₁ᵀ (3×4)</span><br>`;
-  h+=`<span style="color:var(--dim)">Chain rule: norm₂ → H = norm₂·W₁ → dL/dnorm₂ = dL/dH · W₁ᵀ</span><br><br>`;
-  const W1T=T(W1);
+  h+=`<span style="color:var(--amber);font-weight:700;font-size:14px">GRADIENT 6: dL/dnorm₂ = dL/dgate_pre · W_gateᵀ + dL/dup · W_upᵀ (3×4)</span><br>`;
+  h+=`<span style="color:var(--dim)">Two paths feed back through norm₂: the gate path and the up path</span><br><br>`;
   toks.forEach((qt,qi)=>{
-    h+=`<span style="padding-left:12px;color:var(--amber)">dL/dnorm₂[${qt}]:</span><br>`;
-    for(let j=0;j<4;j++){
-      const terms=dLdH[qi].map((v,k)=>`${$(v,6)}×${$(W1T[k][j],1)}`).join(' + ');
-      h+=`<span style="padding-left:20px">[${j}] = ${terms} = <span style="color:var(--amber);font-weight:700">${$(dLdnorm2[qi][j],6)}</span></span><br>`;
-    }
-    h+=`<br>`;
+    h+=`<span style="padding-left:12px;color:var(--amber)">dL/dnorm₂[${qt}]: [${dLdnorm2[qi].map(v=>$(v,6)).join(', ')}]</span><br>`;
   });
+  h+=`<br>`;
   showMat('dL/dnorm₂',dLdnorm2,'amber',6);
   h+=`</div>`;
 
@@ -1925,12 +1978,13 @@ function renderBackward(){
   h+=`<div style="font:700 13px var(--mono);color:var(--green);margin-bottom:10px">GRADIENT UPDATE — one training step</div>`;
   h+=`<div style="font:12px var(--mono);color:var(--text2);line-height:2">`;
   h+=`<span style="color:var(--dim)">With learning rate α = 0.01:</span><br>`;
-  h+=`<span style="padding-left:12px">W₁_new = W₁ − α · dL/dW₁ &nbsp;(4×6 matrix, 24 parameters updated)</span><br>`;
-  h+=`<span style="padding-left:12px">W₂_new = W₂ − α · dL/dW₂ &nbsp;(6×4 matrix, 24 parameters updated)</span><br>`;
+  h+=`<span style="padding-left:12px">W_gate_new = W_gate − α · dL/dW_gate &nbsp;(4×6 matrix, 24 parameters updated)</span><br>`;
+  h+=`<span style="padding-left:12px">W_up_new = W_up − α · dL/dW_up &nbsp;(4×6 matrix, 24 parameters updated)</span><br>`;
+  h+=`<span style="padding-left:12px">W_down_new = W_down − α · dL/dW_down &nbsp;(6×4 matrix, 24 parameters updated)</span><br>`;
   h+=`<span style="padding-left:12px">W_q_new = W_q − α · dL/dW_q &nbsp;(4×4 matrix, 16 parameters updated)</span><br>`;
   h+=`<span style="padding-left:12px">W_k_new = W_k − α · dL/dW_k &nbsp;(4×4 matrix, 16 parameters updated)</span><br>`;
   h+=`<span style="padding-left:12px">W_v_new = W_v − α · dL/dW_v &nbsp;(4×4 matrix, 16 parameters updated)</span><br><br>`;
-  h+=`<span style="color:var(--green);font-weight:700">Total: 96 parameters × 1 gradient each = 96 multiplications per training step</span><br>`;
+  h+=`<span style="color:var(--green);font-weight:700">Total: 136 parameters × 1 gradient each = 136 multiplications per training step</span><br>`;
   h+=`<span style="color:var(--dim)">In LLaMA 70B: 70 billion parameters, each updated every step. Same chain rule, just bigger matrices.</span>`;
   h+=`</div></div>`;
 
